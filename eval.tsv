@@ -1,0 +1,40 @@
+3日以内に変更された.pyファイルを検索	^find \. .*-name ["']?\*\.py["']? .*-mtime -3|^find \. .*-mtime -3 .*-name ["']?\*\.py
+ポート8080を使っているプロセスを殺す	lsof -t?i ?:8080.*kill|kill .*\$\(lsof (-t -i|-ti) ?:8080
+git logを著者別にランキング	^git shortlog -[sne]*n
+カレントディレクトリのファイルをサイズ順に表示	^ls -[a-zA-Z]*S
+カレントディレクトリの.pyファイルの行数を数える	(find \. .*\*\.py.*wc -l|wc -l .*\*\.py|wc -l \*\*/\*\.py)
+今日の日付を表示	^date
+ホームディレクトリで一番大きいフォルダ上位5つ	du .*~.*sort -[a-z]*h[a-z]* .*head -(n )?5
+node_modulesフォルダをすべて削除	find \. .*-name ["']?node_modules["']? .*-type d.*(-prune|-exec rm|xargs rm|-delete)|find \. .*-type d .*-name ["']?node_modules["']?.*(-prune|-exec rm|xargs rm)|^rm -rf \.?/?node_modules$
+画像ファイル(jpg,png)の数を数える	find \. .*(\\\(|\().*-name.*jpg.*-o .*-name.*png.*wc -l|find \. .*-iname.*\.(jpg|png).*-o .*wc -l|find -E \. .*-regex.*wc -l
+IPアドレスを表示	ipconfig getifaddr|ifconfig
+CPU使用率の高いプロセス上位5件	ps .*-r.*head|ps aux.*sort .*-k ?3.*head|top -l ?1 .*-o cpu
+直近のgitコミット5件を1行で表示	^git log (--oneline -(n )?5|-(n )?5 --oneline)$
+全ての.txtファイル内のfooをbarに置換	(find \. .*\*\.txt.*sed -i ''|sed -i '' .*\*\.txt)
+DNSキャッシュをクリア	dscacheutil -flushcache|killall -HUP mDNSResponder
+Wi-Fiのネットワーク名を表示	networksetup -getairportnetwork|ipconfig getsummary|wdutil|system_profiler SPAirPortDataType
+空のディレクトリを削除	^find \. .*-type d .*-empty .*-delete|^find \. .*-empty .*-type d .*-delete
+クリップボードの内容をファイルに保存	^pbpaste > 
+現在のブランチ名を表示	git (branch --show-current|rev-parse --abbrev-ref HEAD)
+file.zipのSHA256ハッシュを計算	(shasum -a 256|sha256sum|openssl dgst -sha256) file\.zip
+今日はいい天気ですね	^NOT_A_COMMAND$
+show the 20 most recently modified files	ls -t.*head -(n )?20|ls -[a-zA-Z]*t[a-zA-Z]* .*head -(n )?20
+find files containing TODO in src directory	grep -[a-zA-Z]*[rR][a-zA-Z]* .*TODO.* src
+メモリの使用状況を確認	vm_stat|top -l ?1|memory_pressure
+CPUのコア数を表示	sysctl -n hw.(ncpu|logicalcpu|physicalcpu)
+macOSのバージョンを表示	sw_vers
+logs以下で7日より古い.logファイルを削除	find logs .*-name ["']?\*\.log["']? .*-mtime \+7 .*(-delete|-exec rm)|find logs .*-mtime \+7 .*-name ["']?\*\.log["']?.*(-delete|-exec rm)
+data.csvの2列目だけを表示	(cut -d ?["']?,["']? -f ?2 data\.csv|awk -F ?["']?,["']? .*\$2.* data\.csv)
+access.logで最も多いIPアドレス上位10	awk .*\$1.*access\.log.*sort.*uniq -c.*sort -[a-z]*n.*head|cut .*access\.log.*sort.*uniq -c.*sort -[a-z]*n.*head
+現在のディレクトリをzipで圧縮してbackup.zipにする	^zip -[a-zA-Z]*r[a-zA-Z]* backup\.zip \.
+archive.tar.gzを展開	^tar -?x[a-z]*f archive\.tar\.gz|^tar -?[a-z]*x[a-z]*f archive\.tar\.gz
+Finderで現在のディレクトリを開く	^open \.$
+ファイル名にスペースを含むファイルを探す	^find \. .*-name ["']?\* \*["']?
+jsonファイルを整形して表示 data.json	(jq \.? data\.json|python3 -m json\.tool data\.json|jq \. < data\.json)
+外部IPアドレスを確認	curl .*(ifconfig\.me|ipinfo\.io|icanhazip|api\.ipify|checkip)
+Dockerの停止中のコンテナを全削除	docker (container prune|rm \$\(docker ps -a?q -?f)
+8.8.8.8にpingを5回送る	^ping -c ?5 8\.8\.8\.8$
+環境変数PATHを1行ずつ表示	(echo \$PATH \| tr ["']?:["']? ["']?\\n["']?|print -l \$path|tr ["']?:["']? ["']?\\n["']? <<< ["']?\$PATH)
+hello.txtの行数を数える	^(wc -l (< )?hello\.txt|cat hello\.txt \| wc -l)$
+10秒後に通知を表示	sleep 10.*osascript -e .*display notification
+スリープを防止	^caffeinate

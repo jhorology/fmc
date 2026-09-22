@@ -1,0 +1,30 @@
+2日以内に作成・変更された.mdファイルを一覧	^find \. .*-name ["']?\*\.md["']? .*-mtime -2|^find \. .*-mtime -2 .*-name ["']?\*\.md
+ポート4000で動いているプロセスを確認	^lsof -i ?:4000$|^lsof -i ?tcp:4000
+カレントディレクトリで一番大きいファイル上位3つ	(du -[a-z]*h?[a-z]* .*sort -[a-z]*h[a-z]* .*head -(n )?3|ls -[a-zA-Z]*S[a-zA-Z]* .*head -(n )?[34]|find \. .*-type f.*sort .*head -(n )?3)
+.logファイルを全部削除	(find \. .*-name ["']?\*\.log["']? .*(-delete|-exec rm)|^rm (-[if] )?\*\.log$|^rm (-[if] )?\./\*\.log$)
+errorという文字列を含む行をapp.logから数える	^grep -c ["']?error["']? app\.log$|^grep ["']?error["']? app\.log \| wc -l$
+Chromeを開く	^open -a ["']?Google Chrome["']?$
+現在のディレクトリのパスを表示	^pwd$
+git の未コミットの変更を全部取り消す	(git (checkout|restore) (-- )?\.|git reset --hard|git stash)
+dockerで起動中のコンテナを全部停止	docker stop \$\(docker ps -q\)
+ファイルサイズが0のファイルを探す	find \. .*(-empty|-size 0)
+READMEで"install"という単語を探す	^grep -[a-z]*i?[a-z]*n?[a-z]* ["']?install["']? README|^grep ["']?install["']? README
+video.movのファイルサイズを表示	(ls -lh video\.mov|du -h video\.mov|stat -f ["']?%z["']? video\.mov)
+list.txtをアルファベット順に並べ替え	^sort list\.txt$
+1週間前の日付を表示	^date -v-7d|^date -v-1w
+2つのディレクトリdir1とdir2を比較	^diff -r(q)? dir1 dir2$|^diff -qr dir1 dir2$
+ssh鍵を生成	^ssh-keygen
+show the size of each folder in the current directory	du -[a-z]*d ?1|du -sh \./?\*|du -sh \*
+count how many lines contain "import" in main.py	^grep -c ["']?import["']? main\.py$
+Macを再起動	^sudo (shutdown -r now|reboot)
+ゴミ箱のファイル数を数える	(ls|find) .*~/\.Trash.*wc -l
+test.shを実行可能にする	^chmod (\+x|u\+x|755) test\.sh$
+カレントディレクトリのgitリポジトリを初期化	^git init$
+tmpディレクトリを作成してその中に移動	^mkdir -?p? ?tmp && cd tmp$
+input.mp3の再生	^afplay input\.mp3$
+今の時刻をクリップボードにコピー	date.*\| ?pbcopy
+DNSサーバーの設定を確認	(scutil --dns|cat /etc/resolv\.conf|networksetup -getdnsservers)
+こんにちは、元気ですか	^NOT_A_COMMAND$
+.envファイルを除いて全ファイルをgrepでAPI_KEYを検索	grep -r.* ["']?API_KEY["']? .*--exclude=["']?\.env["']?|grep -r.*--exclude=["']?\.env["']? .*API_KEY
+ユーザーのcrontabを表示	^crontab -l$
+Xcodeのキャッシュ(DerivedData)を削除	rm -rf ~/Library/Developer/Xcode/DerivedData
