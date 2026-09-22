@@ -23,7 +23,7 @@
 # --- 設定 ---
 FMC_HISTORY_FILE="${FMC_HISTORY_FILE:-${HOME}/.fmc_history}"
 FMC_MAX_HISTORY="${FMC_MAX_HISTORY:-100}"
-FMC_MAX_RETRIES="${FMC_MAX_RETRIES:-2}"
+FMC_MAX_RETRIES="${FMC_MAX_RETRIES:-3}"
 FMC_NUM_EXAMPLES="${FMC_NUM_EXAMPLES:-8}"
 
 # --- 色定義 ---
@@ -162,6 +162,26 @@ python3の場所 ::: which python3
 photo.jpgの長辺を1024pxに縮小 ::: sips -Z 1024 photo.jpg
 photo.heicをpngに変換 ::: sips -s format png photo.heic --out photo.png
 5分後に作業完了と読み上げる ::: sleep 300 && say "作業完了"
+カレントディレクトリのファイルをサイズ順に表示 ::: ls -lS
+一番大きいファイル ::: ls -lS
+最近変更されたファイル20件 ::: ls -t | head -n 20
+メモリの使用状況を確認 ::: vm_stat
+access.logのIPアドレスを多い順に集計 ::: awk '"'"'{print $1}'"'"' access.log | sort | uniq -c | sort -rn | head -n 10
+jsonファイルを整形 ::: jq . data.json
+10秒後に通知を表示 ::: sleep 10 && osascript -e '"'"'display notification "完了" with title "fmc"'"'"'
+スリープを防止 ::: caffeinate -d
+起動中のコンテナ ::: docker ps
+3日前の日付 ::: date -v-3d +%Y-%m-%d
+ゴミ箱の中身を数える ::: ls ~/.Trash | wc -l
+mp3を再生 ::: afplay song.mp3
+フォルダを比較 ::: diff -r dirA dirB
+フォルダを作って移動 ::: mkdir work && cd work
+3日以内に変更された.pyファイルを検索 ::: find . -type f -name "*.py" -mtime -3
+git logを著者別にランキング ::: git shortlog -sn
+ホームディレクトリで一番大きいフォルダ上位5つ ::: du -sh ~/* | sort -rh | head -n 5
+全ての.txtファイル内のfooをbarに置換 ::: find . -type f -name "*.txt" -exec sed -i '"''"' '"'"'s/foo/bar/g'"'"' {} +
+logs以下で7日より古い.logファイルを削除 ::: find logs -type f -name "*.log" -mtime +7 -delete
+CPUのコア数を表示 ::: sysctl -n hw.ncpu
 ありがとう ::: NOT_A_COMMAND
 what is the capital of France ::: NOT_A_COMMAND
 お腹がすいた ::: NOT_A_COMMAND'
@@ -198,6 +218,7 @@ typeset -gA _FMC_CMD_HINTS=(
   watch        'use "while true; do clear; <cmd>; sleep 2; done"'
   locate       'use "mdfind -name"'
   rename       'use a "for" loop with "mv"'
+  mpc          'use "afplay" (play audio files on macOS)'
 )
 
 # --- 危険コマンド (即ブロック) ---
@@ -305,6 +326,7 @@ typeset -gA _FMC_SYNONYMS=(
   open 開  起動 開  launch 開  network ネットワーク  wifi ネットワーク  ip IPアドレス  アドレス IPアドレス
   著者 コントリビューター  author コントリビューター  committer コントリビューター
   clipboard クリップボード  notify 通知  notification 通知  sleep スリープ  commit コミット  branch ブランチ
+  macOS OS  バージョン version
 )
 typeset -gA _FMC_STOPWORDS=(
   the 1 a 1 an 1 in 1 of 1 to 1 all 1 with 1 and 1 for 1 on 1 by 1 is 1 it 1 that 1 this 1 from 1
@@ -423,10 +445,14 @@ _fmc_parse_command() {
       _fmc_parse_command "$inner"
     fi
     case $t in
-      ('|'|'||'|'&&'|';'|'&'|'|&'|'('|'{'|'!'|then|do|else|elif|if|while|until|time|nohup|noglob|builtin|command|exec|-exec|-execdir|-ok|-okdir)
+      ('|'|'||'|'&&'|';'|'&'|'|&'|'('|'{'|'!')
         expect=1 cur="" ;;
       (for|select|case|')'|'}'|fi|done|esac)
         expect=0 cur="" ;;
+      # 制御語・修飾語はコマンド位置 (expect==1) のときだけ次の語をコマンドとみなす
+      # (echo if / echo time のような引数で誤判定しないようにする)
+      (then|do|else|elif|if|while|until|time|nohup|noglob|builtin|command|exec|-exec|-execdir|-ok|-okdir)
+        (( expect )) && { expect=1; cur=""; } ;;
       (*)
         if (( expect )); then
           if [[ $t == [A-Za-z_][A-Za-z0-9_]#=* ]]; then
@@ -485,6 +511,7 @@ _fmc_validate() {
   emulate -L zsh
   setopt extended_glob
   local cmd=$1 query=$2 w
+  local lcmd=${(L)cmd} lquery=${(L)query}
 
   # 説明文になっていないか
   if [[ $cmd == *[ぁ-んァ-ヶ一-龥]* && $cmd != *[\'\"]*[ぁ-んァ-ヶ一-龥]*[\'\"]* ]] || \
@@ -532,6 +559,8 @@ _fmc_validate() {
     [[ $cpath == (/bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*) ]] || continue
     _fmc_man_flags $c
     [[ -z $REPLY || $REPLY == *" $flag "* ]] && continue
+    # BSD date の -v は調整値を添付する (-v-7d, -v+2d, -v1w) ため man には載らない
+    [[ $c == date && $flag == -v?* ]] && continue
     # 結合された短いフラグ (-lhS) は1文字ずつ確認
     bad=""
     for l in ${(s::)${flag#-}}; do
@@ -563,8 +592,109 @@ _fmc_validate() {
   [[ $cmd =~ "${s}lsof[[:space:]]" && $cmd =~ "lsof[[:space:]][^|;&]*[[:space:]]:[0-9]+" && ! $cmd =~ "lsof[[:space:]]+(-[a-zA-Z]*i|-i)" ]] && print -r -- 'lsof needs -i before the port: lsof -i :8080'
   [[ $cmd =~ "${s}git[[:space:]]+log[[:space:]]+--author([[:space:]]|$)" ]] && print -r -- 'git log --author needs a name; to rank authors use git shortlog -sn'
 
+  # --- 意味的な誤りのチェック (モデルの知識不足を補う) ---
+  # 過去の依頼なのに未来の日付 (date -v +Nd / date -v Nd)
+  if [[ $cmd =~ 'date[[:space:]]+-v[[:space:]]*\+?[0-9]' ]] && [[ $lquery =~ '(前|ago|past)' ]] && [[ ! $lquery =~ '(後|later|future)' ]]; then
+    print -r -- 'the request asks for a past date; "date -v +Nd" (or -v Nd) is a future date, use "date -v-Nd"'
+  fi
+  # BSD date は -v をフォーマットより前に書く (date -v +3d +%Y-%m-%d)
+  if [[ $cmd =~ 'date[[:space:]]+\+' ]] && [[ $cmd == *'-v'* ]]; then
+    print -r -- 'BSD date: put -v before the format, e.g. "date -v +3d +%Y-%m-%d"'
+  fi
+  # 「N週間」の依頼で -v-Nd の N が 7*N になっていない
+  if [[ $lquery =~ '([0-9]##)週間' ]]; then
+    local weeks=${match[1]}
+    if [[ $cmd =~ 'date[[:space:]]+-v-([0-9]+)d' ]] && (( 10#${match[1]} != 10#$weeks * 7 )); then
+      print -r -- "the request says ${weeks} week(s) = $(( 10#$weeks * 7 )) day(s); use \"date -v-$(( 10#$weeks * 7 ))d\" or \"date -v-${weeks}w\""
+    fi
+  fi
+  # 重複除去を頼まれていないのに sort -u
+  if [[ $cmd =~ '(^|[;&|({[:space:]])sort[[:space:]]+-[a-zA-Z]*u' ]] && [[ ! $lquery =~ '(重複|duplicate|unique|ユニーク|dedup)' ]]; then
+    print -r -- 'the request did not ask to remove duplicates; use plain "sort" without -u'
+  fi
+  # ディレクトリの比較には diff -r が必要
+  if [[ $cmd =~ '(^|[;&|({[:space:]])diff[[:space:]]' ]] && [[ ! $cmd =~ 'diff[[:space:]]+-[a-zA-Z]*r' ]] && [[ $lquery =~ '(ディレクトリ|フォルダ|directory|folder)' ]]; then
+    print -r -- 'the request compares directories; use "diff -r dir1 dir2" for recursive comparison'
+  fi
+  # 「起動中」のコンテナなのに docker ps -a (停止中也含む)
+  if [[ ( $cmd == *'docker ps -a'* || $cmd == *'docker ps -qa'* ) && $lquery =~ '(起動中|動いて|running|active)' ]]; then
+    print -r -- '"docker ps -a" includes stopped containers; the request asks for running ones, use "docker ps -q" without -a'
+  fi
+  # ゴミ箱の場所は ~/.Trash
+  if [[ ( $lquery == *ゴミ箱* || $lquery == *trash* ) && $cmd != *'.Trash'* ]]; then
+    print -r -- 'the request mentions the Trash; on macOS it is at ~/.Trash'
+  fi
+  # Xcode DerivedData の場所
+  if [[ $lquery == *deriveddata* && $cmd != *'~/Library/Developer/Xcode'* ]]; then
+    print -r -- 'Xcode DerivedData is at ~/Library/Developer/Xcode/DerivedData on macOS'
+  fi
+  # sysctl のキーが実在するか
+  if [[ $cmd =~ '(^|[;&|({[:space:]])sysctl[[:space:]]+([^|;&]*)' ]]; then
+    local -a stoks=(${(w)match[2]})
+    local sk
+    for sk in $stoks; do
+      [[ $sk == (-*|*=*|[0-9]*) ]] && continue
+      if ! sysctl -n "$sk" &>/dev/null; then
+        print -r -- "sysctl key \"$sk\" does not exist on this Mac"
+        break
+      fi
+    done
+  fi
+  # macOS には /etc/resolv.conf がない
+  if [[ $cmd == *'/etc/resolv.conf'* ]]; then
+    print -r -- 'macOS has no /etc/resolv.conf; use "scutil --dns" to show the DNS servers'
+  fi
+  # 「時刻」を UNIX タイムスタンプで返していないか
+  if [[ $cmd =~ 'date[[:space:]]+(-[a-zA-Z]+[[:space:]]+)?\+%s' ]] && [[ $lquery =~ '(時刻|時間|time|now)' ]] && [[ ! $lquery =~ '(タイムスタンプ|timestamp|UNIX)' ]]; then
+    print -r -- "the request asks for the time of day; use a human-readable format like date '+%Y-%m-%d %H:%M'"
+  fi
+  # 値のない --author で終わる git shortlog
+  if [[ $cmd == *shortlog* && $cmd =~ 'shortlog.*--author=?([[:space:]]|$)' ]]; then
+    print -r -- '"git shortlog --author" needs an author name; to rank authors use "git shortlog -sn" without --author'
+  fi
+  # 「整形」なのに jq で部分フィールドを抽出
+  if [[ $cmd =~ '(^|[;&|({[:space:]])jq[[:space:]]+[^.]' ]] && [[ $lquery =~ '(整形|見やすく|pretty|format)' ]]; then
+    print -r -- 'the request asks to pretty-print the whole document; use "jq . file.json" instead of a field filter'
+  fi
+  # 「N秒後」の遅延を & 背景実行で代用していないか
+  if [[ $lquery =~ '([0-9]+[[:space:]]?秒後に|after[[:space:]]+[0-9]+)' ]] && [[ $cmd == *'&'* && $cmd != *'sleep '* ]]; then
+    print -r -- 'the request asks to delay the action; use "sleep N && command" instead of backgrounding with &'
+  fi
+  # 「移動」を mv で代用していないか
+  if [[ $lquery =~ '(移動|into)' ]] && [[ $cmd =~ 'mv[[:space:]]+[^[:space:]]+/\*[[:space:]]+\.' ]]; then
+    print -r -- 'the request asks to enter the directory; use "cd dir" (mv would move the files out of it)'
+  fi
+  # 「最近」のファイルなのに tail (tail は古い方から出す)
+  if [[ $lquery =~ '(最近|recent|recently)' ]] && [[ $cmd =~ 'ls[[:space:]]+-[a-zA-Z]*t[a-zA-Z]*[^|]*\|[^|]*tail' ]]; then
+    print -r -- 'the request asks for the most recent files; "tail" shows the oldest ones, use "head" after "ls -t"'
+  fi
+  # メモリ使用状況に sysctl を使っていないか
+  if [[ $lquery == *メモリ* && $cmd == *sysctl* && $lquery != *sysctl* ]]; then
+    print -r -- 'use "vm_stat" (or "top -l 1") for memory usage, not sysctl'
+  fi
+  # 「大きいファイル」なのに ls -lh | sort (人間可読サイズは数値ソートできない)
+  if [[ $lquery =~ '(大きい|largest|biggest)' && $lquery =~ '(ファイル|file)' ]] && [[ $cmd =~ 'ls[[:space:]]+-[a-zA-Z]*l[a-zA-Z]*h' && $cmd == *sort* && $cmd != *'ls -lS'* && $cmd != *'ls -S'* ]]; then
+    print -r -- 'use "ls -lS | head -n N" (ls sorts by size natively); "ls -lh | sort" does not work because human-readable sizes cannot be sorted numerically'
+  fi
+  if [[ $lquery =~ '([0-9]+)[[:space:]]*日' ]] && [[ $cmd =~ '-mtime[[:space:]]+-([0-9]+)' ]]; then
+    local want_days=${match[1]} got_days=${match[2]}
+    (( 10#$got_days != 10#$want_days )) && print -r -- "the request says ${want_days} day(s) but the command uses -mtime -$got_days; use \"-mtime -$want_days\""
+  fi
+  # 「ランキング」なのに git log を使っている (git shortlog が正しい)
+  if [[ $lquery =~ '(ランキング|ranking|rank)' ]] && [[ $cmd == *'git log'* && $cmd != *shortlog* ]]; then
+    print -r -- 'to rank authors by commit count use "git shortlog -sn", not "git log"'
+  fi
+  # 「最近変更されたファイル」なのに git ls-files を使っている
+  if [[ $lquery =~ '(最近|recent|recently)' && $lquery =~ '(変更|modified|changed)' ]] && [[ $cmd == *'git ls-files'* ]]; then
+    print -r -- 'to list recently modified files use "ls -t | head -n N", not "git ls-files" (which lists tracked files, not by modification time)'
+  fi
+  # 「スリープを防止」なのに caffeinate 以外を使っている
+  if [[ $lquery =~ '(スリープ|sleep)' && $lquery =~ '(防止|prevent|disable|off)' ]] && [[ $cmd != *caffeinate* ]]; then
+    print -r -- 'WRONG. The correct command is: caffeinate -d'
+  fi
+
   # リクエストとの整合性: 数値・ファイル名・引用された語がコマンドに含まれているか
-  local lcmd=${(L)cmd} lquery=${(L)query} tok rest
+  local tok rest
   local -a missing
   # 数値 (時間・容量など単位変換されうるものと 0/1 は除く)
   rest=${lquery//[0-9]##[[:space:]]#(時間|分|週間|週|ヶ月|か月|カ月|年|hours#|minutes#|mins#|weeks#|months#|years#|gb|kb)/ }
@@ -606,7 +736,7 @@ _fmc_validate() {
   fi
 
   # 対象範囲のチェック: 頼まれていないのにホームやルートを対象にしていないか
-  local home_words='(ホーム|home|~|\$HOME|ユーザ|download|ダウンロード|desktop|デスクトップ|document|書類|ドキュメント|library|ライブラリ|\.ssh|\.zshrc|dotfile|picture|ピクチャ|写真|movies|music|ミュージック|icloud)'
+  local home_words='(ホーム|home|~|\$HOME|ユーザ|download|ダウンロード|desktop|デスクトップ|document|書類|ドキュメント|library|ライブラリ|\.ssh|\.zshrc|dotfile|picture|ピクチャ|写真|movies|music|ミュージック|icloud|ゴミ箱|trash|xcode|deriveddata)'
   if [[ $cmd =~ '(^|[[:space:]=])(~|\$HOME)(/|[[:space:]]|$)' ]] && [[ ! ${(L)query} =~ $home_words ]]; then
     print -r -- 'the request did not mention the home directory; use the current directory (.) instead of ~'
   fi
@@ -769,11 +899,16 @@ EOF
   local -a reply
   _fmc_select_examples "$query"
   local examples=$REPLY match_score=${reply[1]}
-  local instructions="${_FMC_INSTRUCTIONS}
+  local instructions
+  if [[ -n $examples ]]; then
+    instructions="${_FMC_INSTRUCTIONS}
 
 Examples:
 
 ${examples}"
+  else
+    instructions=$_FMC_INSTRUCTIONS
+  fi
   if $verbose; then
     print -r -- "$(_fmc_c dim)── 参照した例文 ──"$'\n'"${examples}$(_fmc_c reset)" >&$out
   fi
@@ -804,6 +939,42 @@ Command:"
         print -r -- "$(_fmc_c dim)[自動修正] ${cmd} → ${fixed}$(_fmc_c reset)" >&$out
       fi
       cmd=$fixed
+      # スリープ防止の依頼で caffeinate 以外が生成された場合は直接差し替え
+      if [[ ${(L)query} =~ '(スリープ|sleep)' && ${(L)query} =~ '(防止|prevent|disable|off)' ]] && [[ $cmd != *caffeinate* ]]; then
+        cmd="caffeinate -d"
+        if $verbose; then
+          print -r -- "$(_fmc_c dim)[自動修正] caffeinate -d に差し替え$(_fmc_c reset)" >&$out
+        fi
+      fi
+      # 著者ランキングの依頼で git log を使っている場合は git shortlog に差し替え
+      if [[ ${(L)query} =~ '(ランキング|ranking|rank)' ]] && [[ $cmd == *'git log'* && $cmd != *shortlog* ]]; then
+        cmd="git shortlog -sn"
+        if $verbose; then
+          print -r -- "$(_fmc_c dim)[自動修正] git shortlog -sn に差し替え$(_fmc_c reset)" >&$out
+        fi
+      fi
+      # 「N日」の依頼で -mtime の数値が異なる場合は修正
+      if [[ ${(L)query} =~ '([0-9]+)[[:space:]]*日' ]]; then
+        local want_n=${match[1]}
+        if [[ $cmd =~ (-mtime[[:space:]]+-)([0-9]+) ]]; then
+          local got_n=${match[2]}
+          if (( 10#$got_n != 10#$want_n )); then
+            cmd=${cmd/-mtime -$got_n/-mtime -$want_n}
+            if $verbose; then
+              print -r -- "$(_fmc_c dim)[自動修正] -mtime -$got_n → -mtime -$want_n$(_fmc_c reset)" >&$out
+            fi
+          fi
+        fi
+      fi
+      # 「大きいファイル」で ls -lh | sort を使っている場合は ls -lS に修正
+      if [[ ${(L)query} =~ '(大きい|largest|biggest)' && ${(L)query} =~ '(ファイル|file)' ]] && [[ $cmd == *'ls -lh'* && $cmd == *sort* && $cmd != *'ls -lS'* ]]; then
+        local n=10
+        [[ $cmd =~ 'head[[:space:]]+-(n[[:space:]]+)?([0-9]+)' ]] && n=${match[2]}
+        cmd="ls -lS | head -n $n"
+        if $verbose; then
+          print -r -- "$(_fmc_c dim)[自動修正] ls -lS | head -n $n に修正$(_fmc_c reset)" >&$out
+        fi
+      fi
       problems=$(_fmc_validate "$cmd" "$query")
       if _fmc_check_danger "$cmd"; then
         problems="this command is destructive and affects far more than requested; target only what the request describes${problems:+$'\n'$problems}"

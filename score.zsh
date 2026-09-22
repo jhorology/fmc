@@ -1,14 +1,21 @@
 #!/bin/zsh
 # 使い方: zsh score.zsh [fmc.zsh] [eval.tsv]
-#   各行 "リクエスト<TAB>正解の正規表現(ERE)" を fmc -p で生成して採点する
+#   各行 "リクエスト<TAB>正解の正規表現(ERE)[<TAB>NGの正規表現(任意)]" を fmc -p で生成して採点する
+#   3列目 (NGの正規表現) があれば、それにマッチした場合は OK としない (偽陽性の排除用)
 zmodload zsh/datetime
-src=${1:-${0:h}/fmc.zsh}; ev=${2:-${0:h}/eval.tsv}
+src=${1:-${0:h}/fmc.zsh}
+ev=${2:-${0:h}/eval.tsv}
 source $src
-pass=0; total=0; t0=$EPOCHREALTIME
-while IFS=$'\t' read -r q re; do
-  (( total++ ))
-  cmd=$(fmc -p "$q" 2>/dev/null </dev/null) || { [[ -z $cmd ]] && cmd=NOT_A_COMMAND }
-  if print -r -- "$cmd" | grep -Eq -- "$re"; then (( pass++ )); mark=OK; else mark=NG; fi
-  printf '%s  %-36s => %s\n' $mark "$q" "$cmd"
-done < $ev
-printf '\nSCORE %d/%d  (%.1fs)\n' $pass $total $(( EPOCHREALTIME - t0 ))
+pass=0
+total=0
+t0=$EPOCHREALTIME
+while IFS=$'\t' read -r q re neg; do
+	((total++))
+	cmd=$(fmc -p "$q" 2>/dev/null </dev/null) || { [[ -z $cmd ]] && cmd=NOT_A_COMMAND; }
+	if print -r -- "$cmd" | grep -Eq -- "$re" && { [[ -z ${neg:-} ]] || ! print -r -- "$cmd" | grep -Eq -- "$neg"; }; then
+		((pass++))
+		mark=OK
+	else mark=NG; fi
+	printf '%s  %-36s => %s\n' $mark "$q" "$cmd"
+done <$ev
+printf '\nSCORE %d/%d  (%.1fs)\n' $pass $total $((EPOCHREALTIME - t0))
