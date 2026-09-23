@@ -3,6 +3,7 @@
 #   各行 "リクエスト<TAB>正解の正規表現(ERE)[<TAB>NGの正規表現(任意)]" を fmc -p で生成して採点する
 #   3列目 (NGの正規表現) があれば、それにマッチした場合は OK としない (偽陽性の排除用)
 #   最後に、平均生成回数と、検証の問題が残ったまま出力された件数も表示する
+#   FMC_BACKEND=cloud で実行するとクラウドのモデルで測る (回数制限を避けるため1問ごとに FMC_SCORE_SLEEP 秒待つ)
 zmodload zsh/datetime
 src=${1:-${0:h}/fmc.zsh}
 ev=${2:-${0:h}/eval.tsv}
@@ -19,11 +20,15 @@ while IFS=$'\t' read -r q re neg; do
 		mark=OK
 	else mark=NG; fi
 	printf '%s  %-36s => %s\n' $mark "$q" "$cmd"
+	[[ ${FMC_BACKEND:-local} == cloud ]] && sleep ${FMC_SCORE_SLEEP:-1}
 done <$ev
-tries=0 warned=0 runs=0
-while IFS=$'\t' read -r t p; do
+tries=0 warned=0 runs=0 fallback=0
+while IFS=$'\t' read -r t p b; do
 	((runs++, tries += t))
 	((p > 0)) && ((warned++))
+	[[ ${FMC_BACKEND:-local} == cloud && $b == local ]] && ((fallback++))
 done <$FMC_STATS_FILE
 rm -f $FMC_STATS_FILE
-printf '\nSCORE %d/%d  (%.1fs)  平均生成回数 %.2f  警告付き %d件\n' $pass $total $((EPOCHREALTIME - t0)) $((runs ? tries * 1.0 / runs : 0)) $warned
+printf '\nSCORE %d/%d  (%.1fs)  平均生成回数 %.2f  警告付き %d件' $pass $total $((EPOCHREALTIME - t0)) $((runs ? tries * 1.0 / runs : 0)) $warned
+[[ ${FMC_BACKEND:-local} == cloud ]] && printf '  オンデバイスへの切り替え %d件' $fallback
+print

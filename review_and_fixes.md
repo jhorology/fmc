@@ -127,3 +127,112 @@
 - 同じ依頼を言い換えた評価セットを作り、言い回しの違いに対する安定性を測る。
 - `git` / `docker` のサブコマンドのフラグを、`git help <sub>` などから検証する。
 - 再生成しても問題が残ったとき、警告付きで出すのではなく、例文バンク内でもっとも近い例文のコマンドを候補として示す。
+
+---
+
+# 3回目のレビューと機能向上プラン (2026-09-23)
+
+今回のレビューでは、機能の向上と汎化性能（特に eval3.tsv での正答率）の改善を主眼として評価を行いました。
+
+## 機能向上のための改善プラン
+
+### 1. macOS固有コマンドの知識拡充
+
+- 課題: 画像のメタデータ取得、画面ロック、Wi-Fiのオフなど、macOS固有の操作でLinux向けのコマンドが生成される傾向がある。
+- 対策: rules.tsv にmacOS固有のシステム操作に関するルールを追加する。
+
+### 2. インタラクティブな学習機能の追加
+
+- 課題: 未知のタスクに対する汎化性能が頭打ちになっている。
+- 対策: ユーザーが修正して実行したコマンドを記録し、次回のプロンプトに活用するフィードバックループを実装する。
+
+---
+
+## 実装コード
+
+### 1. rules.tsv への追加ルール
+
+```tsv
+画面.*(ロック|lock)	-	-	pmset|CGSession	to lock the screen on macOS, use "pmset displaysleepnow" or "osascript"
+音量.*(ミュート|mute)	-	-	amixer|pactl	to mute volume on macOS, use "osascript -e 'set volume with output muted'"
+Wi-Fi.*(オフ|off)	-	-	nmcli|ifconfig	to turn off Wi-Fi on macOS, use "networksetup -setairportpower en0 off"
+画像.*(サイズ|幅|高さ)	-	-	identify|exiftool	to get image dimensions on macOS, use "sips -g pixelWidth -g pixelHeight"
+```
+
+### 2. fmc.zsh への学習機能の追加
+
+```zsh
+# ユーザーの実行コマンドを学習する関数
+_fmc_learn_from_user() {
+  local request="$1"
+  local executed_command="$2"
+  local user_examples_file="${FMC_USER_EXAMPLES_FILE:-$HOME/.fmc_user_examples.tsv}"
+
+  if [[ -f "$user_examples_file" ]] && grep -q "^${request}\t" "$user_examples_file"; then
+    return
+  fi
+
+  echo "${request}\t${executed_command}" >> "$user_examples_file"
+}
+```
+
+### 3. 例文読み込み機能の拡張
+
+```zsh
+local user_examples_file="${FMC_USER_EXAMPLES_FILE:-$HOME/.fmc_user_examples.tsv}"
+if [[ -f "$user_examples_file" ]]; then
+  while IFS=$'\t' read -r q a; do
+    [[ -z "$q" || "$q" == \#* ]] && continue
+    _fmc_ex_q+=("$q")
+    _fmc_ex_a+=("$a")
+  done < "$user_examples_file"
+fi
+```
+
+# 3回目のレビューと機能向上プラン (2026-09-23)
+
+今回のレビューでは、機能の向上と汎化性能（特に eval3.tsv での正答率）の改善を主眼として評価を行いました。
+
+## 機能向上のための改善プラン
+
+### 1. macOS固有コマンドの知識拡充
+- 課題: 画像のメタデータ取得、画面ロック、Wi-Fiのオフなど、macOS固有の操作でLinux向けのコマンドが生成される傾向がある。
+- 対策: rules.tsv にmacOS固有のシステム操作に関するルールを追加する。
+
+### 2. インタラクティブな学習機能の追加
+- 課題: 未知のタスクに対する汎化性能が頭打ちになっている。
+- 対策: ユーザーが修正して実行したコマンドを記録し、次回のプロンプトに活用するフィードバックループを実装する。
+
+---
+
+## 実装コード
+
+### 1. rules.tsv への追加ルール
+画面.*(ロック|lock)	-	-	pmset|CGSession	to lock the screen on macOS, use "pmset displaysleepnow" or "osascript"
+音量.*(ミュート|mute)	-	-	amixer|pactl	to mute volume on macOS, use "osascript -e 'set volume with output muted'"
+Wi-Fi.*(オフ|off)	-	-	nmcli|ifconfig	to turn off Wi-Fi on macOS, use "networksetup -setairportpower en0 off"
+画像.*(サイズ|幅|高さ)	-	-	identify|exiftool	to get image dimensions on macOS, use "sips -g pixelWidth -g pixelHeight"
+
+### 2. fmc.zsh への学習機能の追加
+# ユーザーの実行コマンドを学習する関数
+_fmc_learn_from_user() {
+  local request="$1"
+  local executed_command="$2"
+  local user_examples_file="${FMC_USER_EXAMPLES_FILE:-$HOME/.fmc_user_examples.tsv}"
+  
+  if [[ -f "$user_examples_file" ]] && grep -q "^${request}\t" "$user_examples_file"; then
+    return
+  fi
+  
+  echo "${request}\t${executed_command}" >> "$user_examples_file"
+}
+
+### 3. 例文読み込み機能の拡張
+local user_examples_file="${FMC_USER_EXAMPLES_FILE:-$HOME/.fmc_user_examples.tsv}"
+if [[ -f "$user_examples_file" ]]; then
+  while IFS=$'\t' read -r q a; do
+    [[ -z "$q" || "$q" == \#* ]] && continue
+    _fmc_ex_q+=("$q")
+    _fmc_ex_a+=("$a")
+  done < "$user_examples_file"
+fi

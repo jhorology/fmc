@@ -28,6 +28,9 @@ FMC_MAX_RETRIES="${FMC_MAX_RETRIES:-3}"
 FMC_NUM_EXAMPLES="${FMC_NUM_EXAMPLES:-8}"
 FMC_EXAMPLES_FILE="${FMC_EXAMPLES_FILE:-${_FMC_DIR}/examples.tsv}"
 FMC_RULES_FILE="${FMC_RULES_FILE:-${_FMC_DIR}/rules.tsv}"
+FMC_BACKEND="${FMC_BACKEND:-local}"
+FMC_SHORTCUT_NAME="${FMC_SHORTCUT_NAME:-ask-cloud-model}"
+FMC_CLOUD_NUM_EXAMPLES="${FMC_CLOUD_NUM_EXAMPLES:-0}"
 
 # source し直したときに例文・ルールを読み込み直す
 unset _fmc_ex_q _fmc_ex_a _fmc_ex_f _fmc_df _fmc_rules
@@ -659,13 +662,26 @@ _fmc_autofix() {
   print -r -- "$cmd"
 }
 
-# fm でコマンドを1つ生成する
+# コマンドを1つ生成する
+#   local: fm (オンデバイス) / cloud: ショートカット経由のクラウドモデル
+#   cloud のショートカットは入力をそのままモデルに渡すものを想定し、instructions も入力に含める
 _fmc_generate() {
   emulate -L zsh
-  local prompt=$1 instructions=$2 sampling=${3:-greedy} raw
-  local -a opts=(--no-stream)
-  [[ $sampling == greedy ]] && opts+=(--greedy)
-  raw=$(fm respond $opts --instructions "$instructions" "$prompt") || return 1
+  local prompt=$1 instructions=$2 sampling=${3:-greedy} backend=${4:-local} raw
+  if [[ $backend == cloud ]]; then
+    # 失敗理由 (利用上限など) は標準エラーに出す
+    local errf=$(mktemp -t fmc) rc=0
+    raw=$(print -r -- "${instructions}"$'\n\n'"${prompt}" |
+      shortcuts run "$FMC_SHORTCUT_NAME" --input-path - --output-path - --output-type public.plain-text 2>$errf) || rc=1
+    [[ -n ${raw//[[:space:]]/} ]] || rc=1
+    (( rc )) && [[ -s $errf ]] && print -r -- "   ${$(<$errf)//$'\n'/ }" >&2
+    rm -f $errf
+    (( rc )) && return 1
+  else
+    local -a opts=(--no-stream)
+    [[ $sampling == greedy ]] && opts+=(--greedy)
+    raw=$(fm respond $opts --instructions "$instructions" "$prompt") || return 1
+  fi
   _fmc_sanitize "$raw"
 }
 
@@ -674,7 +690,7 @@ fmc() {
   emulate -L zsh
   setopt extended_glob
 
-  local auto_exec=false print_only=false verbose=false
+  local auto_exec=false print_only=false verbose=false backend=$FMC_BACKEND
   while (( $# )); do
     case "$1" in
       --history|-H)
@@ -695,6 +711,8 @@ fmc - Foundation Model Command translator
   fmc -y "説明"                      確認なしで即実行 (破壊的な操作は確認あり)
   fmc -p "説明"                      コマンドだけを標準出力に出す (検証の問題が残ると終了コード 2)
   fmc -v "説明"                      参照した例文と検証の過程を表示
+  fmc -c "説明"                      クラウドのモデル (ショートカット経由) で生成
+  fmc -l "説明"                      オンデバイスのモデル (fm) で生成
   fmc --history                      生成履歴を表示
   fmc --clear-history                履歴を削除
   fmc --help                         このヘルプを表示
@@ -706,7 +724,10 @@ fmc - Foundation Model Command translator
   FMC_NUM_EXAMPLES    few-shot に使う例文の数 (デフォルト: 8)
   FMC_EXAMPLES_FILE   例文バンク (デフォルト: fmc.zsh と同じ場所の examples.tsv)
   FMC_RULES_FILE      意味的な検証ルール (デフォルト: fmc.zsh と同じ場所の rules.tsv)
-  FMC_STATS_FILE      設定すると、生成回数と残った問題数を1行ずつ追記する (評価用)
+  FMC_BACKEND         生成に使うモデル: local (fm、既定) / cloud (ショートカット経由)
+  FMC_SHORTCUT_NAME   cloud で呼ぶショートカット名 (デフォルト: ask-cloud-model)
+  FMC_CLOUD_NUM_EXAMPLES  cloud で渡す例文の数 (デフォルト: 0)
+  FMC_STATS_FILE      設定すると、生成回数・残った問題数・使ったモデルを1行ずつ追記する (評価用)
 
 例:
   fmc "ポート3000のプロセスを殺す"
@@ -718,6 +739,8 @@ EOF
       -y|--yes)     auto_exec=true; shift ;;
       -p|--print)   print_only=true; shift ;;
       -v|--verbose) verbose=true; shift ;;
+      -c|--cloud)   backend=cloud; shift ;;
+      -l|--local)   backend=local; shift ;;
       --) shift; break ;;
       *) break ;;
     esac
@@ -736,28 +759,44 @@ EOF
 
   local query="$*"
 
-  # --- fm コマンドの存在チェック ---
-  if ! command -v fm &>/dev/null; then
+  # --- 生成に使うコマンドの存在チェック ---
+  if [[ $backend != (local|cloud) ]]; then
+    print -r -- "$(_fmc_c red)❌ FMC_BACKEND は local か cloud を指定してください: ${backend}$(_fmc_c reset)" >&2
+    return 1
+  fi
+  if [[ $backend == cloud ]] && ! command -v shortcuts &>/dev/null; then
+    print -r -- "$(_fmc_c yellow)⚠️  'shortcuts' コマンドが無いため、オンデバイスのモデルを使います$(_fmc_c reset)" >&2
+    backend=local
+  fi
+  if [[ $backend == local ]] && ! command -v fm &>/dev/null; then
     print -r -- "$(_fmc_c red)❌ 'fm' コマンドが見つかりません。macOS 26 以降が必要です。$(_fmc_c reset)" >&2
     return 1
   fi
 
-  $print_only || print -r -- "$(_fmc_c dim)🤖 コマンドを生成中...$(_fmc_c reset)"
+  if ! $print_only; then
+    if [[ $backend == cloud ]]; then
+      print -r -- "$(_fmc_c dim)☁️  コマンドを生成中 (クラウド: ${FMC_SHORTCUT_NAME})...$(_fmc_c reset)"
+    else
+      print -r -- "$(_fmc_c dim)🤖 コマンドを生成中...$(_fmc_c reset)"
+    fi
+  fi
 
   # --- few-shot 付きの instructions を組み立て ---
   local REPLY
   local -a reply
   _fmc_select_examples "$query"
   local examples=$REPLY match_score=${reply[1]}
-  local instructions
-  if [[ -n $examples ]]; then
-    instructions="${_FMC_INSTRUCTIONS}
-
-Examples:
-
-${examples}"
-  else
-    instructions=$_FMC_INSTRUCTIONS
+  local local_instructions=$_FMC_INSTRUCTIONS cloud_instructions=$_FMC_INSTRUCTIONS
+  [[ -n $examples ]] && local_instructions+=$'\n\nExamples:\n\n'"${examples}"
+  # クラウドのモデルは例文に引きずられて精度が下がるので、既定では例文を渡さない
+  if (( FMC_CLOUD_NUM_EXAMPLES > 0 )); then
+    _fmc_select_examples "$query" $FMC_CLOUD_NUM_EXAMPLES
+    [[ -n $REPLY ]] && cloud_instructions+=$'\n\nExamples:\n\n'"${REPLY}"
+  fi
+  local instructions=$local_instructions
+  if [[ $backend == cloud ]]; then
+    instructions=$cloud_instructions
+    (( FMC_CLOUD_NUM_EXAMPLES > 0 )) && examples=$REPLY || examples=""
   fi
   if $verbose; then
     print -r -- "$(_fmc_c dim)── 参照した例文 ──"$'\n'"${examples}$(_fmc_c reset)" >&$out
@@ -771,7 +810,15 @@ Command:"
   local -A seen_cmds
   for (( attempt = 0; attempt <= FMC_MAX_RETRIES; attempt++ )); do
     (( tries++ ))
-    if ! cmd=$(_fmc_generate "$prompt" "$instructions" $sampling); then
+    local -i gen_ok=0
+    cmd=$(_fmc_generate "$prompt" "$instructions" $sampling $backend) && gen_ok=1
+    # クラウドは回数制限やネットワークで失敗しうるので、オンデバイスに切り替えて続ける
+    if (( ! gen_ok )) && [[ $backend == cloud ]] && command -v fm &>/dev/null; then
+      print -r -- "$(_fmc_c yellow)⚠️  クラウドでの生成に失敗したため、オンデバイスのモデルに切り替えます$(_fmc_c reset)" >&2
+      backend=local instructions=$local_instructions
+      cmd=$(_fmc_generate "$prompt" "$instructions" $sampling $backend) && gen_ok=1
+    fi
+    if (( ! gen_ok )); then
       print -r -- "$(_fmc_c red)❌ コマンドの生成に失敗しました$(_fmc_c reset)" >&2
       return 1
     fi
@@ -820,7 +867,7 @@ ${history_note}Write a corrected command that fixes these problems. Answer with 
 Command:"
   done
   cmd=$best_cmd problems=$best_problems
-  [[ -n $FMC_STATS_FILE ]] && print -r -- "${tries}"$'\t'"${#${(f)problems}}" >> "$FMC_STATS_FILE"
+  [[ -n $FMC_STATS_FILE ]] && print -r -- "${tries}"$'\t'"${#${(f)problems}}"$'\t'"${backend}" >> "$FMC_STATS_FILE"
 
   # --- NOT_A_COMMAND チェック ---
   if [[ ${(U)cmd} == NOT_A_COMMAND* ]]; then

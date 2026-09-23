@@ -1,7 +1,8 @@
 # fmc
 
 自然言語で書いた依頼を zsh のコマンドに変換する、Mac 用のシェル関数です。
-変換には Apple Foundation Models の CLI (`fm`) を使い、処理はすべてオンデバイスで完結します。
+変換には Apple Foundation Models の CLI (`fm`) を使い、既定では処理がすべてオンデバイスで完結します。
+設定すれば、ショートカット経由で Apple のクラウドのモデルを使うこともできます (より正確ですが、依頼文がサーバーに送られます)。
 
 ```console
 $ fmc "3日以内に変更された.pyファイルを検索"
@@ -17,7 +18,7 @@ $ find . -type f -name "*.py" -mtime -3█    ← プロンプトに入るので
 
 ## 特徴
 
-- **オンデバイス**: 依頼の内容を外部サービスに送りません。
+- **オンデバイス (既定)**: 依頼の内容を外部サービスに送りません。クラウドのモデルを使うのは、`-c` か `FMC_BACKEND=cloud` を指定したときだけです。
 - **macOS 向け**: BSD 版のコマンド (`sed -i ''`、`date -v-1d`、`stat -f` など) を使うように誘導し、Linux 専用コマンドは検証で弾きます。
 - **生成後の検証と再生成**: 構文、コマンドやフラグの実在、依頼との整合性をチェックし、問題があれば理由を添えて作り直させます。
 - **危険なコマンドの抑止**: `rm -rf ~` のようなコマンドはブロックします。`-y` で即実行する場合も、削除などの操作は実行前に確認します。
@@ -57,6 +58,8 @@ fmc "list the 10 largest files in this directory"   # 英語でも可
 | `-y`, `--yes` | 生成したコマンドをすぐ実行する。削除・移動・`sudo` などの操作や、検証で問題が残った場合は実行前に確認する |
 | `-p`, `--print` | コマンドだけを標準出力に出す (スクリプトやパイプ用)。検証の問題が残った場合は、警告を標準エラーに出して終了コード 2 を返す |
 | `-v`, `--verbose` | 参照した例文、自動修正、検証と再生成の過程を表示する |
+| `-c`, `--cloud` | クラウドのモデル (ショートカット経由) で生成する。後述の設定が必要 |
+| `-l`, `--local` | オンデバイスのモデル (`fm`) で生成する (`FMC_BACKEND=cloud` のときの一時的な切り替え用) |
 | `-H`, `--history` | 生成履歴を表示する |
 | `--clear-history` | 生成履歴を削除する |
 | `-h`, `--help` | ヘルプを表示する |
@@ -73,7 +76,30 @@ fmc "list the 10 largest files in this directory"   # 英語でも可
 | `FMC_NUM_EXAMPLES` | `8` | few-shot としてモデルに渡す例文の最大数 |
 | `FMC_EXAMPLES_FILE` | `fmc.zsh` と同じ場所の `examples.tsv` | 例文バンク |
 | `FMC_RULES_FILE` | `fmc.zsh` と同じ場所の `rules.tsv` | 意味的な検証ルール |
-| `FMC_STATS_FILE` | (なし) | 設定すると、生成回数と残った問題数を1行ずつ追記する (評価用) |
+| `FMC_BACKEND` | `local` | 生成に使うモデル。`local` (オンデバイス) か `cloud` (ショートカット経由) |
+| `FMC_SHORTCUT_NAME` | `ask-cloud-model` | `cloud` で呼ぶショートカットの名前 |
+| `FMC_CLOUD_NUM_EXAMPLES` | `0` | `cloud` のときに渡す例文の数 |
+| `FMC_STATS_FILE` | (なし) | 設定すると、生成回数・残った問題数・使ったモデルを1行ずつ追記する (評価用) |
+
+### クラウドのモデルを使う
+
+ショートカットアプリの「Use Model」アクションを経由して、Apple のクラウドのモデル (Private Cloud Compute) でコマンドを生成できます。オンデバイスのモデルより大幅に正確ですが (後述の評価を参照)、**依頼文が Apple のサーバーに送られます**。既定はオンデバイスのままです。
+
+1. ショートカットアプリで `ask-cloud-model` という名前のショートカットを作り、次のようにします (英語 UI の表記)。
+   - Details で **Use as Quick Action** などをオンにし、**Receive [Text] input** にする
+   - **Use Model** アクションを追加し、モデルを **Cloud**、プロンプトを **Shortcut Input** だけにする
+   - **Stop and Output** で **Use Model** の **Response** を返す
+2. 動作を確認します。
+
+   ```zsh
+   print -r -- "say hi" | shortcuts run ask-cloud-model --input-path - --output-path - --output-type public.plain-text
+   ```
+
+3. `fmc -c "依頼"` で使うか、`FMC_BACKEND=cloud` を設定します。
+
+クラウドのモデルには利用上限があります。上限の値や解除までの時間は公開されていませんが、評価で1時間ほどの間に約130回呼んだところで「You have reached the usage limit for this model.」と断られるようになりました。普段使いで上限に届くことはまず無いはずですが、評価のように続けて呼ぶときは注意してください。失敗した場合は理由を表示し、オンデバイスのモデルに切り替えて生成を続けます。
+
+クラウドのモデルは例文を渡すとかえって精度が下がったため、既定では例文を渡しません (`FMC_CLOUD_NUM_EXAMPLES`)。検証・自動修正・再生成・危険コマンドのブロックは、オンデバイスのときと同じようにかかります。
 
 ## 仕組み
 
@@ -81,7 +107,7 @@ fmc "list the 10 largest files in this directory"   # 英語でも可
 そこで、モデルの前後に次の処理を挟んでいます。
 
 1. **例文の検索**: 例文バンク `examples.tsv` (macOS で動く約140件) から、依頼に近いものを選んでモデルに渡します。日本語はカタカナ語・漢字語の単位、英語は単語単位で比べ、「削除 / 消す / remove」のような言い換えも同じ語として扱います。
-2. **生成**: 短い instructions と選んだ例文を付けて、`fm respond` で1行のコマンドを生成します。
+2. **生成**: 短い instructions と選んだ例文を付けて、`fm respond` で1行のコマンドを生成します。クラウドのモデルを使う場合は、instructions と依頼文をショートカットに渡します (例文は既定で渡しません)。
 3. **自動修正**: `find -o` の括弧、`sed -i ''`、`lsof -i :PORT`、`open -a "Google Chrome"` など、定型的な誤りは直接直します。
 4. **検証**:
    - zsh の構文
@@ -118,7 +144,9 @@ FMC_HISTORY_FILE=/dev/null zsh score.zsh fmc.zsh eval3.tsv
 |---|---|---|
 | `eval.tsv` (40問) | 調整用 | 37/40 |
 | `eval2.tsv` (30問) | 調整用 | 27/30 |
-| `eval3.tsv` (30問) | 調整に使わない確認用 | 13/30 |
+| `eval3.tsv` (30問) | 調整に使わない確認用 | 13/30 (クラウド: 28/30) |
+
+クラウドのモデルで測るときは `FMC_BACKEND=cloud zsh score.zsh fmc.zsh eval3.tsv` のように実行します (利用上限に注意)。
 
 各行は「リクエスト<TAB>正解コマンドの正規表現 (ERE)」の形式です。`score.zsh` は点数のほかに、平均生成回数と、検証の問題が残ったまま出力された件数も表示します。問題ごとの結果や採点の限界は [fmc_eval_report.md](fmc_eval_report.md) にまとめています。
 
