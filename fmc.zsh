@@ -8,23 +8,29 @@
 #   fmc "ポート8080を使っているプロセスを殺す"
 #   fmc "git logを著者別にランキング"
 #   fmc -y "ファイル一覧"          # 確認スキップで即実行 (破壊的コマンドは確認あり)
-#   fmc -p "ファイル一覧"          # コマンドだけを標準出力へ (スクリプト用)
+#   fmc -p "ファイル一覧"          # コマンドだけを標準出力へ (スクリプト用、検証の問題が残ると終了コード 2)
 #   fmc -v "ファイル一覧"          # 参照した例文・検証過程を表示
 #   fmc --history                  # 過去の生成履歴を表示
 #   fmc --clear-history            # 履歴を削除
 #
 # 仕組み:
-#   1. 例文バンクからリクエストに近い例を選んで few-shot として渡す
+#   1. 例文バンク (examples.tsv) からリクエストに近い例を選んで few-shot として渡す
 #   2. 機械的に直せる誤りを自動修正 (find -o の括弧、sed -i '' など)
-#   3. 生成結果を静的検証 (構文 / コマンドとフラグの存在 / BSD非互換 / 依頼との整合 / 対象範囲)
+#   3. 生成結果を静的検証 (構文 / コマンドとフラグの存在 / BSD非互換 / 依頼との整合 (rules.tsv) / 対象範囲)
 #   4. 問題があれば理由を添えて再生成 (最大 FMC_MAX_RETRIES 回)
 # ============================================================================
 
 # --- 設定 ---
+typeset -g _FMC_DIR=${${(%):-%x}:A:h}
 FMC_HISTORY_FILE="${FMC_HISTORY_FILE:-${HOME}/.fmc_history}"
 FMC_MAX_HISTORY="${FMC_MAX_HISTORY:-100}"
 FMC_MAX_RETRIES="${FMC_MAX_RETRIES:-3}"
 FMC_NUM_EXAMPLES="${FMC_NUM_EXAMPLES:-8}"
+FMC_EXAMPLES_FILE="${FMC_EXAMPLES_FILE:-${_FMC_DIR}/examples.tsv}"
+FMC_RULES_FILE="${FMC_RULES_FILE:-${_FMC_DIR}/rules.tsv}"
+
+# source し直したときに例文・ルールを読み込み直す
+unset _fmc_ex_q _fmc_ex_a _fmc_ex_f _fmc_df _fmc_rules
 
 # --- 色定義 ---
 typeset -gA _fmc_colors=(
@@ -42,149 +48,6 @@ typeset -gA _fmc_colors=(
 typeset -g _FMC_INSTRUCTIONS='You are a macOS zsh expert. Convert the request into one zsh command line that works on macOS (BSD tools).
 Answer with the command only. Follow the style of the examples. Operate on the current directory unless another place is named.
 If the request is not a terminal task, answer NOT_A_COMMAND.'
-
-# --- 例文バンク (リクエスト ::: コマンド) ---
-# macOS (BSD) で正しく動くことを確認した例。リクエストに近いものが few-shot に使われる。
-typeset -g _FMC_EXAMPLES='過去24時間以内に更新されたファイルを探す ::: find . -type f -mtime -1
-5日以内に変更された.jsファイル ::: find . -type f -name "*.js" -mtime -5
-find markdown files modified in the last 2 weeks ::: find . -type f -name "*.md" -mtime -14
-30日以上前の.tmpファイルを削除 ::: find . -type f -name "*.tmp" -mtime +30 -delete
-100MBより大きいファイルを探す ::: find . -type f -size +100M
-__pycache__フォルダを全部消す ::: find . -type d -name "__pycache__" -prune -exec rm -rf {} +
-remove all .DS_Store files ::: find . -type f -name ".DS_Store" -delete
-空のファイルを一覧 ::: find . -type f -empty
-mp4とmovの動画ファイルを探す ::: find . -type f \( -name "*.mp4" -o -name "*.mov" \)
-count pdf files ::: find . -type f -name "*.pdf" | wc -l
-ファイル名にreportを含むファイル ::: find . -type f -name "*report*"
-大文字小文字を区別せずにreadmeを探す ::: find . -iname "readme*"
-シンボリックリンクを一覧表示 ::: find . -type l
-ディレクトリ構造を2階層まで表示 ::: find . -maxdepth 2 -type d
-ファイルの総数を数える ::: find . -type f | wc -l
-現在のフォルダの合計サイズ ::: du -sh .
-サブディレクトリごとのサイズを大きい順に ::: du -sh ./* | sort -rh
-Downloadsフォルダの大きいファイル上位10件 ::: find ~/Downloads -type f -exec du -h {} + | sort -rh | head -n 10
-ファイルを更新日時の新しい順に並べる ::: ls -lt
-ファイルを古い順に表示 ::: ls -ltr
-ファイルを大きい順に表示 ::: ls -lS
-空のフォルダを探す ::: find . -type d -empty
-隠しファイルも含めて詳細表示 ::: ls -la
-list only directories ::: ls -d */
-srcフォルダをbackupにコピー ::: cp -R src backup
-拡張子.txtを.mdに一括変更 ::: for f in *.txt; do mv -- "$f" "${f%.txt}.md"; done
-notes.txtの絶対パスを表示 ::: realpath notes.txt
-script.shに実行権限を付ける ::: chmod +x script.sh
-main.goでfuncを含む行を行番号付きで表示 ::: grep -n "func" main.go
-search "error" recursively ignoring case ::: grep -rni "error" .
-.jsファイルの中からconsole.logを探す ::: grep -rn "console.log" --include="*.js" .
-TODOを含むファイル名だけ表示 ::: grep -rl "TODO" .
-app.logでerrorを含まない行 ::: grep -v "error" app.log
-README.mdの先頭20行 ::: head -n 20 README.md
-app.logの末尾をリアルタイムで監視 ::: tail -f app.log
-list.txtの重複行を削除してソート ::: sort -u list.txt
-list.txtで行ごとの出現回数を多い順に ::: sort list.txt | uniq -c | sort -rn
-server.logの3列目の値を集計して多い順に上位5件 ::: awk '"'"'{print $3}'"'"' server.log | sort | uniq -c | sort -rn | head -n 5
-count words in essay.txt ::: wc -w essay.txt
-config.yml内のlocalhostを127.0.0.1に置換 ::: sed -i '"''"' '"'"'s/localhost/127.0.0.1/g'"'"' config.yml
-replace old with new in all .md files ::: find . -type f -name "*.md" -exec sed -i '"''"' '"'"'s/old/new/g'"'"' {} +
-memo.txtの空行を削除 ::: sed -i '"''"' '"'"'/^$/d'"'"' memo.txt
-users.csvの1列目と3列目を表示 ::: cut -d "," -f 1,3 users.csv
-scores.txtの2列目の合計 ::: awk '"'"'{sum += $2} END {print sum}'"'"' scores.txt
-a.txtとb.txtの差分 ::: diff -u a.txt b.txt
-response.jsonを見やすく表示 ::: jq . response.json
-extract the name field from user.json ::: jq -r ".name" user.json
-input.txtの文字コードを確認 ::: file -I input.txt
-Shift_JISのsjis.txtをUTF-8に変換 ::: iconv -f SHIFT_JIS -t UTF-8 sjis.txt > utf8.txt
-ポート3000を使っているプロセスを確認 ::: lsof -i :3000
-kill whatever is listening on port 5000 ::: lsof -ti :5000 | xargs kill -9
-nodeという名前のプロセスを終了 ::: pkill node
-pythonのプロセスを探す ::: pgrep -fl python
-メモリ使用量の多いプロセス上位10 ::: ps -Ao pid,%mem,comm -m | head -n 11
-CPUを使っているプロセスを多い順に ::: ps -Ao pid,%cpu,comm -r | head -n 11
-待ち受け中のポート一覧 ::: lsof -iTCP -sTCP:LISTEN -n -P
-ディスクの空き容量 ::: df -h
-空きメモリを確認 ::: vm_stat
-システムの稼働時間 ::: uptime
-Macのハードウェア情報 ::: system_profiler SPHardwareDataType
-バッテリー残量を表示 ::: pmset -g batt
-CPUの名前を表示 ::: sysctl -n machdep.cpu.brand_string
-show OS version ::: sw_vers
-Safariを起動 ::: open -a Safari
-https://example.comをブラウザで開く ::: open "https://example.com"
-notes.txtの内容をクリップボードにコピー ::: pbcopy < notes.txt
-現在のパスをクリップボードにコピー ::: pwd | pbcopy
-範囲を選択してスクリーンショット ::: screencapture -i screenshot.png
-処理完了の通知を出す ::: osascript -e '"'"'display notification "完了しました" with title "Terminal"'"'"'
-1時間スリープしないようにする ::: caffeinate -t 3600
-Spotlightでinvoiceという名前のファイルを検索 ::: mdfind -name "invoice"
-DNSキャッシュを削除 ::: sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
-ローカルIPアドレス ::: ipconfig getifaddr en0
-グローバルIPを確認 ::: curl -s https://ifconfig.me
-example.comにpingを3回 ::: ping -c 3 example.com
-example.comのDNSレコードを調べる ::: dig +short example.com
-HTTPヘッダだけ取得 ::: curl -sI https://example.com
-download file.zip from a URL ::: curl -LO "https://example.com/file.zip"
-接続中のWi-FiのSSID ::: networksetup -getairportnetwork en0
-localhostの8080番ポートが開いているか確認 ::: nc -vz localhost 8080
-projectフォルダをtar.gzに圧縮 ::: tar -czf project.tar.gz project
-backup.tgzを解凍 ::: tar -xzf backup.tgz
-archive.tar.gzの中身を一覧 ::: tar -tzf archive.tar.gz
-docsフォルダをdocs.zipにまとめる ::: zip -r docs.zip docs
-files.zipをfilesフォルダに解凍 ::: unzip files.zip -d files
-gitの変更状況を短く表示 ::: git status -s
-ステージされた差分を表示 ::: git diff --staged
-直前のコミットを取り消して変更は残す ::: git reset --soft HEAD~1
-feature/loginブランチを作って切り替え ::: git switch -c feature/login
-ブランチを最終更新順に表示 ::: git branch --sort=-committerdate
-コントリビューター別のコミット数 ::: git shortlog -sn
-全ブランチのログをグラフで表示 ::: git log --oneline --graph --all
-直近10件のコミットを1行ずつ ::: git log --oneline -n 10
-今いるブランチの名前 ::: git branch --show-current
-app.pyの変更履歴を差分付きで ::: git log --follow -p -- app.py
-リモートのURLを確認 ::: git remote -v
-起動中のdockerコンテナ一覧 ::: docker ps
-使われていないdockerイメージを削除 ::: docker image prune -a
-remove all stopped docker containers ::: docker container prune -f
-Pythonの仮想環境を作って有効化 ::: python3 -m venv .venv && source .venv/bin/activate
-ポート8000で簡易HTTPサーバを起動 ::: python3 -m http.server 8000
-Homebrewのパッケージを全部更新 ::: brew update && brew upgrade
-今日の日付をYYYYMMDD形式で ::: date +%Y%m%d
-昨日の日付 ::: date -v-1d +%Y-%m-%d
-現在のUNIXタイムスタンプ ::: date +%s
-ランダムなパスワードを生成 ::: openssl rand -base64 24
-UUIDを生成 ::: uuidgen
-movie.mp4のMD5 ::: md5 movie.mp4
-image.isoのSHA256チェックサム ::: shasum -a 256 image.iso
-logo.pngをbase64エンコード ::: base64 -i logo.png
-PATHを1行ずつ表示 ::: print -l $path
-report.txtの行数 ::: wc -l < report.txt
-python3の場所 ::: which python3
-2秒ごとにディスク使用量を表示 ::: while true; do clear; df -h; sleep 2; done
-photo.jpgの長辺を1024pxに縮小 ::: sips -Z 1024 photo.jpg
-photo.heicをpngに変換 ::: sips -s format png photo.heic --out photo.png
-5分後に作業完了と読み上げる ::: sleep 300 && say "作業完了"
-カレントディレクトリのファイルをサイズ順に表示 ::: ls -lS
-一番大きいファイル ::: ls -lS
-最近変更されたファイル20件 ::: ls -t | head -n 20
-メモリの使用状況を確認 ::: vm_stat
-access.logのIPアドレスを多い順に集計 ::: awk '"'"'{print $1}'"'"' access.log | sort | uniq -c | sort -rn | head -n 10
-jsonファイルを整形 ::: jq . data.json
-10秒後に通知を表示 ::: sleep 10 && osascript -e '"'"'display notification "完了" with title "fmc"'"'"'
-スリープを防止 ::: caffeinate -d
-起動中のコンテナ ::: docker ps
-3日前の日付 ::: date -v-3d +%Y-%m-%d
-ゴミ箱の中身を数える ::: ls ~/.Trash | wc -l
-mp3を再生 ::: afplay song.mp3
-フォルダを比較 ::: diff -r dirA dirB
-フォルダを作って移動 ::: mkdir work && cd work
-3日以内に変更された.pyファイルを検索 ::: find . -type f -name "*.py" -mtime -3
-git logを著者別にランキング ::: git shortlog -sn
-ホームディレクトリで一番大きいフォルダ上位5つ ::: du -sh ~/* | sort -rh | head -n 5
-全ての.txtファイル内のfooをbarに置換 ::: find . -type f -name "*.txt" -exec sed -i '"''"' '"'"'s/foo/bar/g'"'"' {} +
-logs以下で7日より古い.logファイルを削除 ::: find logs -type f -name "*.log" -mtime +7 -delete
-CPUのコア数を表示 ::: sysctl -n hw.ncpu
-ありがとう ::: NOT_A_COMMAND
-what is the capital of France ::: NOT_A_COMMAND
-お腹がすいた ::: NOT_A_COMMAND'
 
 # --- Linux専用コマンドなどに対する代替ヒント ---
 typeset -gA _FMC_CMD_HINTS=(
@@ -221,6 +84,14 @@ typeset -gA _FMC_CMD_HINTS=(
   mpc          'use "afplay" (play audio files on macOS)'
 )
 
+# --- 値を1つ取るオプション (値が -3 や +7 のように - で始まってもフラグとみなさない) ---
+typeset -gA _FMC_VALUE_OPTS=(
+  find  '-mtime -mmin -atime -amin -ctime -cmin -Btime -Bmin -size -maxdepth -mindepth -name -iname -path -ipath -regex -iregex -type -newer -perm -user -group -links -uid -gid'
+  date  '-v -f -r'
+  cut   '-b -c -f -d'
+  sort  '-k -t'
+)
+
 # --- 危険コマンド (即ブロック) ---
 typeset -ga _FMC_DANGER_REGEX=(
   '(^|[;&|[:space:]])mkfs'
@@ -242,7 +113,8 @@ _fmc_c() { print -rn -- "${_fmc_colors[$1]}" }
 
 _fmc_log_history() {
   emulate -L zsh
-  local query=${1//[$'\t\n']/ } cmd=${2//[$'\t\n']/ }
+  # 複数行のコマンドは改行を \x1f にして1行に収める (表示時に戻す)
+  local query=${1//[$'\t\n']/ } cmd=${${2//$'\t'/ }//$'\n'/$'\x1f'}
   print -r -- "$(date '+%Y-%m-%d %H:%M:%S')"$'\t'"${query}"$'\t'"${cmd}" >> "$FMC_HISTORY_FILE"
 
   # 履歴の最大行数を制限
@@ -263,10 +135,10 @@ _fmc_show_history() {
   print -r -- "$(_fmc_c bold)$(_fmc_c cyan)📜 fmc 生成履歴$(_fmc_c reset)"
   print -r -- "$(_fmc_c dim)──────────────────────────────────────────$(_fmc_c reset)"
 
-  local ts query cmd
+  local ts query cmd nl=$'\n    '
   while IFS=$'\t' read -r ts query cmd; do
     print -r -- "$(_fmc_c dim)${ts}$(_fmc_c reset)  $(_fmc_c green)${query}$(_fmc_c reset)"
-    print -r -- "  → $(_fmc_c cyan)${cmd}$(_fmc_c reset)"
+    print -r -- "  → $(_fmc_c cyan)${cmd//$'\x1f'/$nl}$(_fmc_c reset)"
   done < "$FMC_HISTORY_FILE"
 }
 
@@ -379,13 +251,15 @@ _fmc_index_examples() {
   (( ${#_fmc_ex_q} )) && return
   typeset -ga _fmc_ex_q _fmc_ex_a _fmc_ex_f
   typeset -gA _fmc_df
+  [[ -r $FMC_EXAMPLES_FILE ]] || return
   local line f
   local -a reply
-  for line in "${(@f)_FMC_EXAMPLES}"; do
-    [[ $line == *' ::: '* ]] || continue
-    _fmc_ex_q+=("${line%% ::: *}")
-    _fmc_ex_a+=("${line#* ::: }")
-    _fmc_features "${line%% ::: *}"
+  # 形式: リクエスト<TAB>コマンド (# で始まる行はコメント)
+  for line in "${(@f)$(<$FMC_EXAMPLES_FILE)}"; do
+    [[ $line == [^#]*$'\t'?* ]] || continue
+    _fmc_ex_q+=("${line%%$'\t'*}")
+    _fmc_ex_a+=("${line#*$'\t'}")
+    _fmc_features "${line%%$'\t'*}"
     _fmc_ex_f+=(" ${(j: :)reply} ")
     for f in $reply; do (( _fmc_df[$f]++ )); done
   done
@@ -436,7 +310,7 @@ _fmc_parse_command() {
   emulate -L zsh
   setopt extended_glob
   local -a toks=(${(z)1})
-  local expect=1 i=1 t inner cur=""
+  local expect=1 i=1 t inner cur="" exec_outer=""
   while (( i <= $#toks )); do
     t=${toks[i]}
     # コマンド置換の中身も再帰的に調べる
@@ -444,14 +318,24 @@ _fmc_parse_command() {
       inner=${t#*\$\(}; inner=${inner%\)*}
       _fmc_parse_command "$inner"
     fi
+    # find -exec ... \; / {} + の終わりで find のオプション解析に戻る
+    if [[ -n $exec_outer ]] && [[ $t == ('\;'|"';'"|'";"') || ( $t == '+' && ${toks[i-1]} == '{}' ) ]]; then
+      cur=$exec_outer exec_outer="" expect=0
+      (( i++ ))
+      continue
+    fi
     case $t in
       ('|'|'||'|'&&'|';'|'&'|'|&'|'('|'{'|'!')
-        expect=1 cur="" ;;
+        expect=1 cur="" exec_outer="" ;;
       (for|select|case|')'|'}'|fi|done|esac)
         expect=0 cur="" ;;
+      (-exec|-execdir|-ok|-okdir)
+        if [[ -n $cur ]]; then
+          exec_outer=$cur expect=1 cur=""
+        fi ;;
       # 制御語・修飾語はコマンド位置 (expect==1) のときだけ次の語をコマンドとみなす
       # (echo if / echo time のような引数で誤判定しないようにする)
-      (then|do|else|elif|if|while|until|time|nohup|noglob|builtin|command|exec|-exec|-execdir|-ok|-okdir)
+      (then|do|else|elif|if|while|until|time|nohup|noglob|builtin|command|exec)
         (( expect )) && { expect=1; cur=""; } ;;
       (*)
         if (( expect )); then
@@ -472,9 +356,12 @@ _fmc_parse_command() {
           fi
         elif [[ -n $cur && $t == -* && $t != -- ]]; then
           local base_flag=${t%%=*}
-          if [[ $base_flag == -[A-Za-z0-9-]* && $base_flag != *[^A-Za-z0-9-]* ]]; then
+          if [[ $cur == (kill|killall|pkill) && $base_flag == -([0-9]##|[A-Z][A-Z0-9]#) ]]; then
+            :   # シグナル指定 (kill -9, killall -HUP)
+          elif [[ $base_flag == -[A-Za-z0-9-]* && $base_flag != *[^A-Za-z0-9-]* ]]; then
             cw_flags+=("$cur $base_flag")
           fi
+          [[ $t != *=* && " ${_FMC_VALUE_OPTS[$cur]} " == *" $base_flag "* ]] && (( i++ ))
         elif [[ $t == -- ]]; then
           cur=""
         fi ;;
@@ -504,6 +391,21 @@ _fmc_man_flags() {
     mkdir -p ${cache_file:h} 2>/dev/null && print -rn -- "${_fmc_man_cache[$c]}" > $cache_file 2>/dev/null
   fi
   REPLY=${_fmc_man_cache[$c]}
+}
+
+# 意味的な検証ルール (rules.tsv) を初回だけ読み込む
+#   形式: 依頼の正規表現<TAB>依頼の除外正規表現<TAB>コマンドの正規表現<TAB>コマンドの除外正規表現<TAB>指摘文
+#   正規表現は ERE。依頼は小文字化して照合する。条件なしは "-"
+_fmc_load_rules() {
+  emulate -L zsh
+  (( ${+_fmc_rules} )) && return
+  typeset -ga _fmc_rules=()
+  [[ -r $FMC_RULES_FILE ]] || return
+  local line
+  for line in "${(@f)$(<$FMC_RULES_FILE)}"; do
+    [[ -z $line || $line == \#* ]] && continue
+    (( ${#${(ps:\t:)line}} == 5 )) && _fmc_rules+=("$line")
+  done
 }
 
 # 生成されたコマンドを静的検証し、問題点 (英語: モデルへのフィードバック用) を1行ずつ出力する
@@ -593,40 +495,20 @@ _fmc_validate() {
   [[ $cmd =~ "${s}git[[:space:]]+log[[:space:]]+--author([[:space:]]|$)" ]] && print -r -- 'git log --author needs a name; to rank authors use git shortlog -sn'
 
   # --- 意味的な誤りのチェック (モデルの知識不足を補う) ---
-  # 過去の依頼なのに未来の日付 (date -v +Nd / date -v Nd)
-  if [[ $cmd =~ 'date[[:space:]]+-v[[:space:]]*\+?[0-9]' ]] && [[ $lquery =~ '(前|ago|past)' ]] && [[ ! $lquery =~ '(後|later|future)' ]]; then
-    print -r -- 'the request asks for a past date; "date -v +Nd" (or -v Nd) is a future date, use "date -v-Nd"'
-  fi
-  # BSD date は -v をフォーマットより前に書く (date -v +3d +%Y-%m-%d)
-  if [[ $cmd =~ 'date[[:space:]]+\+' ]] && [[ $cmd == *'-v'* ]]; then
-    print -r -- 'BSD date: put -v before the format, e.g. "date -v +3d +%Y-%m-%d"'
-  fi
+  # 単純な条件のものは rules.tsv に書く。ここには値の計算やコマンド実行が必要なものだけを置く
   # 「N週間」の依頼で -v-Nd の N が 7*N になっていない
-  if [[ $lquery =~ '([0-9]##)週間' ]]; then
+  if [[ $lquery =~ '([0-9]+)週間' ]]; then
     local weeks=${match[1]}
     if [[ $cmd =~ 'date[[:space:]]+-v-([0-9]+)d' ]] && (( 10#${match[1]} != 10#$weeks * 7 )); then
       print -r -- "the request says ${weeks} week(s) = $(( 10#$weeks * 7 )) day(s); use \"date -v-$(( 10#$weeks * 7 ))d\" or \"date -v-${weeks}w\""
     fi
   fi
-  # 重複除去を頼まれていないのに sort -u
-  if [[ $cmd =~ '(^|[;&|({[:space:]])sort[[:space:]]+-[a-zA-Z]*u' ]] && [[ ! $lquery =~ '(重複|duplicate|unique|ユニーク|dedup)' ]]; then
-    print -r -- 'the request did not ask to remove duplicates; use plain "sort" without -u'
-  fi
-  # ディレクトリの比較には diff -r が必要
-  if [[ $cmd =~ '(^|[;&|({[:space:]])diff[[:space:]]' ]] && [[ ! $cmd =~ 'diff[[:space:]]+-[a-zA-Z]*r' ]] && [[ $lquery =~ '(ディレクトリ|フォルダ|directory|folder)' ]]; then
-    print -r -- 'the request compares directories; use "diff -r dir1 dir2" for recursive comparison'
-  fi
-  # 「起動中」のコンテナなのに docker ps -a (停止中也含む)
-  if [[ ( $cmd == *'docker ps -a'* || $cmd == *'docker ps -qa'* ) && $lquery =~ '(起動中|動いて|running|active)' ]]; then
-    print -r -- '"docker ps -a" includes stopped containers; the request asks for running ones, use "docker ps -q" without -a'
-  fi
-  # ゴミ箱の場所は ~/.Trash
-  if [[ ( $lquery == *ゴミ箱* || $lquery == *trash* ) && $cmd != *'.Trash'* ]]; then
-    print -r -- 'the request mentions the Trash; on macOS it is at ~/.Trash'
-  fi
-  # Xcode DerivedData の場所
-  if [[ $lquery == *deriveddata* && $cmd != *'~/Library/Developer/Xcode'* ]]; then
-    print -r -- 'Xcode DerivedData is at ~/Library/Developer/Xcode/DerivedData on macOS'
+  # 「N日以内」の依頼で -mtime -M の M が N になっていない
+  if [[ $lquery =~ '([0-9]+)[[:space:]]*日以内' ]]; then
+    local want_days=${match[1]}
+    if [[ $cmd =~ '-mtime[[:space:]]+-([0-9]+)' ]] && (( 10#${match[1]} != 10#$want_days )); then
+      print -r -- "the request says ${want_days} day(s) but the command uses -mtime -${match[1]}; use \"-mtime -$want_days\""
+    fi
   fi
   # sysctl のキーが実在するか
   if [[ $cmd =~ '(^|[;&|({[:space:]])sysctl[[:space:]]+([^|;&]*)' ]]; then
@@ -640,58 +522,17 @@ _fmc_validate() {
       fi
     done
   fi
-  # macOS には /etc/resolv.conf がない
-  if [[ $cmd == *'/etc/resolv.conf'* ]]; then
-    print -r -- 'macOS has no /etc/resolv.conf; use "scutil --dns" to show the DNS servers'
-  fi
-  # 「時刻」を UNIX タイムスタンプで返していないか
-  if [[ $cmd =~ 'date[[:space:]]+(-[a-zA-Z]+[[:space:]]+)?\+%s' ]] && [[ $lquery =~ '(時刻|時間|time|now)' ]] && [[ ! $lquery =~ '(タイムスタンプ|timestamp|UNIX)' ]]; then
-    print -r -- "the request asks for the time of day; use a human-readable format like date '+%Y-%m-%d %H:%M'"
-  fi
-  # 値のない --author で終わる git shortlog
-  if [[ $cmd == *shortlog* && $cmd =~ 'shortlog.*--author=?([[:space:]]|$)' ]]; then
-    print -r -- '"git shortlog --author" needs an author name; to rank authors use "git shortlog -sn" without --author'
-  fi
-  # 「整形」なのに jq で部分フィールドを抽出
-  if [[ $cmd =~ '(^|[;&|({[:space:]])jq[[:space:]]+[^.]' ]] && [[ $lquery =~ '(整形|見やすく|pretty|format)' ]]; then
-    print -r -- 'the request asks to pretty-print the whole document; use "jq . file.json" instead of a field filter'
-  fi
-  # 「N秒後」の遅延を & 背景実行で代用していないか
-  if [[ $lquery =~ '([0-9]+[[:space:]]?秒後に|after[[:space:]]+[0-9]+)' ]] && [[ $cmd == *'&'* && $cmd != *'sleep '* ]]; then
-    print -r -- 'the request asks to delay the action; use "sleep N && command" instead of backgrounding with &'
-  fi
-  # 「移動」を mv で代用していないか
-  if [[ $lquery =~ '(移動|into)' ]] && [[ $cmd =~ 'mv[[:space:]]+[^[:space:]]+/\*[[:space:]]+\.' ]]; then
-    print -r -- 'the request asks to enter the directory; use "cd dir" (mv would move the files out of it)'
-  fi
-  # 「最近」のファイルなのに tail (tail は古い方から出す)
-  if [[ $lquery =~ '(最近|recent|recently)' ]] && [[ $cmd =~ 'ls[[:space:]]+-[a-zA-Z]*t[a-zA-Z]*[^|]*\|[^|]*tail' ]]; then
-    print -r -- 'the request asks for the most recent files; "tail" shows the oldest ones, use "head" after "ls -t"'
-  fi
-  # メモリ使用状況に sysctl を使っていないか
-  if [[ $lquery == *メモリ* && $cmd == *sysctl* && $lquery != *sysctl* ]]; then
-    print -r -- 'use "vm_stat" (or "top -l 1") for memory usage, not sysctl'
-  fi
-  # 「大きいファイル」なのに ls -lh | sort (人間可読サイズは数値ソートできない)
-  if [[ $lquery =~ '(大きい|largest|biggest)' && $lquery =~ '(ファイル|file)' ]] && [[ $cmd =~ 'ls[[:space:]]+-[a-zA-Z]*l[a-zA-Z]*h' && $cmd == *sort* && $cmd != *'ls -lS'* && $cmd != *'ls -S'* ]]; then
-    print -r -- 'use "ls -lS | head -n N" (ls sorts by size natively); "ls -lh | sort" does not work because human-readable sizes cannot be sorted numerically'
-  fi
-  if [[ $lquery =~ '([0-9]+)[[:space:]]*日' ]] && [[ $cmd =~ '-mtime[[:space:]]+-([0-9]+)' ]]; then
-    local want_days=${match[1]} got_days=${match[2]}
-    (( 10#$got_days != 10#$want_days )) && print -r -- "the request says ${want_days} day(s) but the command uses -mtime -$got_days; use \"-mtime -$want_days\""
-  fi
-  # 「ランキング」なのに git log を使っている (git shortlog が正しい)
-  if [[ $lquery =~ '(ランキング|ranking|rank)' ]] && [[ $cmd == *'git log'* && $cmd != *shortlog* ]]; then
-    print -r -- 'to rank authors by commit count use "git shortlog -sn", not "git log"'
-  fi
-  # 「最近変更されたファイル」なのに git ls-files を使っている
-  if [[ $lquery =~ '(最近|recent|recently)' && $lquery =~ '(変更|modified|changed)' ]] && [[ $cmd == *'git ls-files'* ]]; then
-    print -r -- 'to list recently modified files use "ls -t | head -n N", not "git ls-files" (which lists tracked files, not by modification time)'
-  fi
-  # 「スリープを防止」なのに caffeinate 以外を使っている
-  if [[ $lquery =~ '(スリープ|sleep)' && $lquery =~ '(防止|prevent|disable|off)' ]] && [[ $cmd != *caffeinate* ]]; then
-    print -r -- 'WRONG. The correct command is: caffeinate -d'
-  fi
+  _fmc_load_rules
+  local rule
+  local -a rf
+  for rule in $_fmc_rules; do
+    rf=("${(@ps:\t:)rule}")
+    [[ $rf[1] == - || $lquery =~ $rf[1] ]] || continue
+    [[ $rf[2] == - || ! $lquery =~ $rf[2] ]] || continue
+    [[ $rf[3] == - || $cmd =~ $rf[3] ]] || continue
+    [[ $rf[4] == - || ! $cmd =~ $rf[4] ]] || continue
+    print -r -- "$rf[5]"
+  done
 
   # リクエストとの整合性: 数値・ファイル名・引用された語がコマンドに含まれているか
   local tok rest
@@ -700,7 +541,10 @@ _fmc_validate() {
   rest=${lquery//[0-9]##[[:space:]]#(時間|分|週間|週|ヶ月|か月|カ月|年|hours#|minutes#|mins#|weeks#|months#|years#|gb|kb)/ }
   for tok in ${(u)=${rest//[^0-9]/ }}; do
     [[ $tok == (0|1) ]] && continue
-    [[ $lcmd == *$tok* ]] || missing+=($tok)
+    [[ $lcmd == *$tok* ]] && continue
+    # 見出し行の分だけ多く出す "上位10" → head -n 11
+    [[ $lcmd =~ "head[[:space:]]+-n?[[:space:]]*$(( 10#$tok + 1 ))([^0-9]|$)" ]] && continue
+    missing+=($tok)
   done
   # ファイル名 (data.csv) と拡張子 (.py)
   for tok in ${(u)=${lquery//[^a-z0-9._-]/ }}; do
@@ -710,7 +554,7 @@ _fmc_validate() {
   # 場所の指定: 「logs以下」「srcフォルダ」「in src directory」
   rest=$query
   while [[ $rest == (#b)(|*[^A-Za-z0-9_.~/-])([A-Za-z0-9_.~/-]##)(以下|の中|内の|フォルダ|ディレクトリ|\ directory|\ folder|\ dir)* ]]; do
-    [[ $lcmd == *${(L)match[2]}* ]] || missing+=($match[2])
+    [[ ${(L)match[2]} == (only|the|this|current|each|all|my|a|an|sub|empty|hidden|new|old) || $lcmd == *${(L)match[2]}* ]] || missing+=($match[2])
     rest=$match[1]
   done
   if [[ $lquery == (#b)*\ in\ ([a-z0-9_.~/-]##)* && ${match[1]} != (the|a|an|this|current|my|all|each) ]]; then
@@ -774,7 +618,7 @@ _fmc_check_danger() {
 _fmc_autofix() {
   emulate -L zsh
   setopt extended_glob
-  local cmd=$1 app
+  local cmd=$1 query=$2 app
   # find の -name A -o -name B を括弧でまとめる
   if [[ $cmd != *'\('* && $cmd =~ '(-i?name [^ ]+( -o -i?name [^ ]+)+)' ]]; then
     cmd=${cmd/$MATCH/\\( $MATCH \\)}
@@ -806,6 +650,12 @@ _fmc_autofix() {
       fi
     done
   fi
+  # 「N日以内」がひとつだけの依頼で、-mtime -M がひとつだけなら M を N に揃える
+  local nq=${query//[[:space:]]/}
+  local -a days=(${(M)${(s: :)${nq//[^0-9日以内]/ }}:#[0-9]##日以内})
+  if (( $#days == 1 )) && [[ $cmd == (#b)(*)-mtime\ -([0-9]##)(*) && $match[1] != *-mtime* && $match[3] != *-mtime* ]]; then
+    cmd="${match[1]}-mtime -${days[1]%日以内}${match[3]}"
+  fi
   print -r -- "$cmd"
 }
 
@@ -815,10 +665,7 @@ _fmc_generate() {
   local prompt=$1 instructions=$2 sampling=${3:-greedy} raw
   local -a opts=(--no-stream)
   [[ $sampling == greedy ]] && opts+=(--greedy)
-  raw=$(fm respond $opts --instructions "$instructions" "$prompt" 2>&1) || {
-    print -r -- "${raw//$'\n'/ }" >&2
-    return 1
-  }
+  raw=$(fm respond $opts --instructions "$instructions" "$prompt") || return 1
   _fmc_sanitize "$raw"
 }
 
@@ -846,7 +693,7 @@ fmc - Foundation Model Command translator
 使い方:
   fmc "自然言語でコマンドを説明"     コマンドを生成してzshバッファに配置
   fmc -y "説明"                      確認なしで即実行 (破壊的な操作は確認あり)
-  fmc -p "説明"                      コマンドだけを標準出力に出す
+  fmc -p "説明"                      コマンドだけを標準出力に出す (検証の問題が残ると終了コード 2)
   fmc -v "説明"                      参照した例文と検証の過程を表示
   fmc --history                      生成履歴を表示
   fmc --clear-history                履歴を削除
@@ -855,8 +702,11 @@ fmc - Foundation Model Command translator
 環境変数:
   FMC_HISTORY_FILE    履歴ファイルのパス (デフォルト: ~/.fmc_history)
   FMC_MAX_HISTORY     最大履歴行数 (デフォルト: 100)
-  FMC_MAX_RETRIES     検証エラー時の再生成回数 (デフォルト: 2)
+  FMC_MAX_RETRIES     検証エラー時の再生成回数 (デフォルト: 3)
   FMC_NUM_EXAMPLES    few-shot に使う例文の数 (デフォルト: 8)
+  FMC_EXAMPLES_FILE   例文バンク (デフォルト: fmc.zsh と同じ場所の examples.tsv)
+  FMC_RULES_FILE      意味的な検証ルール (デフォルト: fmc.zsh と同じ場所の rules.tsv)
+  FMC_STATS_FILE      設定すると、生成回数と残った問題数を1行ずつ追記する (評価用)
 
 例:
   fmc "ポート3000のプロセスを殺す"
@@ -917,9 +767,10 @@ ${examples}"
   local prompt="Request: ${query}
 Command:"
   local cmd best_cmd="" attempt problems best_problems="" history_note="" sampling=greedy fixed
-  local -i best_count=999 count
+  local -i best_count=999 count tries=0
   local -A seen_cmds
   for (( attempt = 0; attempt <= FMC_MAX_RETRIES; attempt++ )); do
+    (( tries++ ))
     if ! cmd=$(_fmc_generate "$prompt" "$instructions" $sampling); then
       print -r -- "$(_fmc_c red)❌ コマンドの生成に失敗しました$(_fmc_c reset)" >&2
       return 1
@@ -934,47 +785,11 @@ Command:"
     elif [[ -z $cmd ]]; then
       problems="empty output" count=1
     else
-      fixed=$(_fmc_autofix "$cmd")
+      fixed=$(_fmc_autofix "$cmd" "$query")
       if $verbose && [[ $fixed != $cmd ]]; then
         print -r -- "$(_fmc_c dim)[自動修正] ${cmd} → ${fixed}$(_fmc_c reset)" >&$out
       fi
       cmd=$fixed
-      # スリープ防止の依頼で caffeinate 以外が生成された場合は直接差し替え
-      if [[ ${(L)query} =~ '(スリープ|sleep)' && ${(L)query} =~ '(防止|prevent|disable|off)' ]] && [[ $cmd != *caffeinate* ]]; then
-        cmd="caffeinate -d"
-        if $verbose; then
-          print -r -- "$(_fmc_c dim)[自動修正] caffeinate -d に差し替え$(_fmc_c reset)" >&$out
-        fi
-      fi
-      # 著者ランキングの依頼で git log を使っている場合は git shortlog に差し替え
-      if [[ ${(L)query} =~ '(ランキング|ranking|rank)' ]] && [[ $cmd == *'git log'* && $cmd != *shortlog* ]]; then
-        cmd="git shortlog -sn"
-        if $verbose; then
-          print -r -- "$(_fmc_c dim)[自動修正] git shortlog -sn に差し替え$(_fmc_c reset)" >&$out
-        fi
-      fi
-      # 「N日」の依頼で -mtime の数値が異なる場合は修正
-      if [[ ${(L)query} =~ '([0-9]+)[[:space:]]*日' ]]; then
-        local want_n=${match[1]}
-        if [[ $cmd =~ (-mtime[[:space:]]+-)([0-9]+) ]]; then
-          local got_n=${match[2]}
-          if (( 10#$got_n != 10#$want_n )); then
-            cmd=${cmd/-mtime -$got_n/-mtime -$want_n}
-            if $verbose; then
-              print -r -- "$(_fmc_c dim)[自動修正] -mtime -$got_n → -mtime -$want_n$(_fmc_c reset)" >&$out
-            fi
-          fi
-        fi
-      fi
-      # 「大きいファイル」で ls -lh | sort を使っている場合は ls -lS に修正
-      if [[ ${(L)query} =~ '(大きい|largest|biggest)' && ${(L)query} =~ '(ファイル|file)' ]] && [[ $cmd == *'ls -lh'* && $cmd == *sort* && $cmd != *'ls -lS'* ]]; then
-        local n=10
-        [[ $cmd =~ 'head[[:space:]]+-(n[[:space:]]+)?([0-9]+)' ]] && n=${match[2]}
-        cmd="ls -lS | head -n $n"
-        if $verbose; then
-          print -r -- "$(_fmc_c dim)[自動修正] ls -lS | head -n $n に修正$(_fmc_c reset)" >&$out
-        fi
-      fi
       problems=$(_fmc_validate "$cmd" "$query")
       if _fmc_check_danger "$cmd"; then
         problems="this command is destructive and affects far more than requested; target only what the request describes${problems:+$'\n'$problems}"
@@ -1005,6 +820,7 @@ ${history_note}Write a corrected command that fixes these problems. Answer with 
 Command:"
   done
   cmd=$best_cmd problems=$best_problems
+  [[ -n $FMC_STATS_FILE ]] && print -r -- "${tries}"$'\t'"${#${(f)problems}}" >> "$FMC_STATS_FILE"
 
   # --- NOT_A_COMMAND チェック ---
   if [[ ${(U)cmd} == NOT_A_COMMAND* ]]; then
@@ -1034,8 +850,11 @@ Command:"
   _fmc_log_history "$query" "$cmd"
 
   if $print_only; then
-    [[ -n $problems ]] && print -r -- "⚠️  ${problems//$'\n'/; }" >&2
     print -r -- "$cmd"
+    if [[ -n $problems ]]; then
+      print -r -- "⚠️  ${problems//$'\n'/; }" >&2
+      return 2
+    fi
     return 0
   fi
 

@@ -1,0 +1,30 @@
+1時間以内に変更されたファイルを探す	^find \. .*(-mmin -60|-mtime -1h)
+500MB以上のファイルを探す	^find \. .*-size \+(500M|499M)
+.jpgファイルを全部数える	^find \. .*-i?name ["']?\*\.jpg["']?.*\| ?wc -l
+src以下の.tsファイルでimportを含む行を検索	grep -[a-zA-Z]*r[a-zA-Z]* .*import.*(--include=["']?\*\.ts["']? .*src|src.*--include=["']?\*\.ts)|grep -[a-zA-Z]*r[a-zA-Z]* .*--include=["']?\*\.ts["']? .*import.*src|find src .*\*\.ts.*grep .*import
+notes.mdの最後の30行を表示	^tail -(n ?)?30 notes\.md$
+buildフォルダを削除	^rm -[rRf]+ \.?/?build/?$
+data.jsonからidフィールドを取り出す	^jq (-r )?["']?\.id["']? data\.json$
+ポート9000を使っているプロセスのPIDを表示	^lsof ((-t -i|-ti) ?:9000|-i ?:9000 -t)$
+Terminalアプリを開く	^open -a ["']?Terminal["']?$
+現在のgitコミットのハッシュを表示	^git rev-parse (--short )?HEAD$|^git log -1 --(format|pretty)=(format:)?%H$
+mainブランチに切り替え	^git (switch|checkout) main$
+gitで追跡されていないファイルを一覧	git (status --porcelain.*\?\?|ls-files (--others|-o)|clean -n)
+photo.pngの画像の幅と高さを表示	sips -g pixel(Width|Height).*photo\.png|mdls .*photo\.png|file photo\.png
+明日の日付を表示	^date -v ?\+1d
+old.txtとnew.txtの違いを表示	^diff (-u )?old\.txt new\.txt$
+users.csvの行数を表示	^wc -l (< )?users\.csv$|^cat users\.csv \| wc -l$
+log.txtに今日の日付を追記	^date( \+[^ ]+)? >> ?log\.txt$
+実行中のプロセス数を数える	^ps (-e|-A|aux|ax)[a-z]* \| wc -l$
+Wi-Fiをオフにする	networksetup -setairportpower en0 off
+画面をロックする	pmset displaysleepnow|CGSession -suspend|osascript .*keystroke "q"
+音量をミュートにする	osascript -e ["']set volume (output muted true|with output muted|output volume 0)
+Homebrewでインストール済みのパッケージを一覧	^brew (list|leaves)
+.zshrcを再読み込み	^(source|\.) ~/\.zshrc$|^exec zsh$
+カレントディレクトリの.shファイルに実行権限を付ける	chmod (\+x|u\+x|755) (\./)?\*\.sh|find \. .*\*\.sh.*chmod
+main.cの中のTODOの数を数える	^grep -c ["']?TODO["']? main\.c$|^grep -o ["']?TODO["']? main\.c \| wc -l$
+おすすめの映画を教えて	^NOT_A_COMMAND$
+find files larger than 1GB in Downloads	find ~/Downloads .*-size \+1G
+show disk usage of the Desktop folder	du -[a-z]*s[a-z]* ~/Desktop
+kill the process named Slack	^(pkill|killall) (-[a-z0-9]+ )?["']?Slack["']?$
+convert image.png to jpg	sips -s format jpeg image\.png

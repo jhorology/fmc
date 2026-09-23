@@ -1,0 +1,138 @@
+過去24時間以内に更新されたファイルを探す	find . -type f -mtime -1
+5日以内に変更された.jsファイル	find . -type f -name "*.js" -mtime -5
+find markdown files modified in the last 2 weeks	find . -type f -name "*.md" -mtime -14
+30日以上前の.tmpファイルを削除	find . -type f -name "*.tmp" -mtime +30 -delete
+100MBより大きいファイルを探す	find . -type f -size +100M
+__pycache__フォルダを全部消す	find . -type d -name "__pycache__" -prune -exec rm -rf {} +
+remove all .DS_Store files	find . -type f -name ".DS_Store" -delete
+空のファイルを一覧	find . -type f -empty
+mp4とmovの動画ファイルを探す	find . -type f \( -name "*.mp4" -o -name "*.mov" \)
+count pdf files	find . -type f -name "*.pdf" | wc -l
+ファイル名にreportを含むファイル	find . -type f -name "*report*"
+大文字小文字を区別せずにreadmeを探す	find . -iname "readme*"
+シンボリックリンクを一覧表示	find . -type l
+ディレクトリ構造を2階層まで表示	find . -maxdepth 2 -type d
+ファイルの総数を数える	find . -type f | wc -l
+現在のフォルダの合計サイズ	du -sh .
+サブディレクトリごとのサイズを大きい順に	du -sh ./* | sort -rh
+Downloadsフォルダの大きいファイル上位10件	find ~/Downloads -type f -exec du -h {} + | sort -rh | head -n 10
+ファイルを更新日時の新しい順に並べる	ls -lt
+ファイルを古い順に表示	ls -ltr
+ファイルを大きい順に表示	ls -lS
+空のフォルダを探す	find . -type d -empty
+隠しファイルも含めて詳細表示	ls -la
+list only directories	ls -d */
+srcフォルダをbackupにコピー	cp -R src backup
+拡張子.txtを.mdに一括変更	for f in *.txt; do mv -- "$f" "${f%.txt}.md"; done
+notes.txtの絶対パスを表示	realpath notes.txt
+script.shに実行権限を付ける	chmod +x script.sh
+main.goでfuncを含む行を行番号付きで表示	grep -n "func" main.go
+search "error" recursively ignoring case	grep -rni "error" .
+.jsファイルの中からconsole.logを探す	grep -rn "console.log" --include="*.js" .
+TODOを含むファイル名だけ表示	grep -rl "TODO" .
+app.logでerrorを含まない行	grep -v "error" app.log
+README.mdの先頭20行	head -n 20 README.md
+app.logの末尾をリアルタイムで監視	tail -f app.log
+list.txtの重複行を削除してソート	sort -u list.txt
+list.txtで行ごとの出現回数を多い順に	sort list.txt | uniq -c | sort -rn
+server.logの3列目の値を集計して多い順に上位5件	awk '{print $3}' server.log | sort | uniq -c | sort -rn | head -n 5
+count words in essay.txt	wc -w essay.txt
+config.yml内のlocalhostを127.0.0.1に置換	sed -i '' 's/localhost/127.0.0.1/g' config.yml
+replace old with new in all .md files	find . -type f -name "*.md" -exec sed -i '' 's/old/new/g' {} +
+memo.txtの空行を削除	sed -i '' '/^$/d' memo.txt
+users.csvの1列目と3列目を表示	cut -d "," -f 1,3 users.csv
+scores.txtの2列目の合計	awk '{sum += $2} END {print sum}' scores.txt
+a.txtとb.txtの差分	diff -u a.txt b.txt
+response.jsonを見やすく表示	jq . response.json
+extract the name field from user.json	jq -r ".name" user.json
+input.txtの文字コードを確認	file -I input.txt
+Shift_JISのsjis.txtをUTF-8に変換	iconv -f SHIFT_JIS -t UTF-8 sjis.txt > utf8.txt
+ポート3000を使っているプロセスを確認	lsof -i :3000
+kill whatever is listening on port 5000	lsof -ti :5000 | xargs kill -9
+nodeという名前のプロセスを終了	pkill node
+pythonのプロセスを探す	pgrep -fl python
+メモリ使用量の多いプロセス上位10	ps -Ao pid,%mem,comm -m | head -n 11
+CPUを使っているプロセスを多い順に	ps -Ao pid,%cpu,comm -r | head -n 11
+待ち受け中のポート一覧	lsof -iTCP -sTCP:LISTEN -n -P
+ディスクの空き容量	df -h
+空きメモリを確認	vm_stat
+システムの稼働時間	uptime
+Macのハードウェア情報	system_profiler SPHardwareDataType
+バッテリー残量を表示	pmset -g batt
+CPUの名前を表示	sysctl -n machdep.cpu.brand_string
+show OS version	sw_vers
+Safariを起動	open -a Safari
+https://example.comをブラウザで開く	open "https://example.com"
+notes.txtの内容をクリップボードにコピー	pbcopy < notes.txt
+現在のパスをクリップボードにコピー	pwd | pbcopy
+範囲を選択してスクリーンショット	screencapture -i screenshot.png
+処理完了の通知を出す	osascript -e 'display notification "完了しました" with title "Terminal"'
+1時間スリープしないようにする	caffeinate -t 3600
+Spotlightでinvoiceという名前のファイルを検索	mdfind -name "invoice"
+DNSキャッシュを削除	sudo dscacheutil -flushcache && sudo killall -HUP mDNSResponder
+ローカルIPアドレス	ipconfig getifaddr en0
+グローバルIPを確認	curl -s https://ifconfig.me
+example.comにpingを3回	ping -c 3 example.com
+example.comのDNSレコードを調べる	dig +short example.com
+HTTPヘッダだけ取得	curl -sI https://example.com
+download file.zip from a URL	curl -LO "https://example.com/file.zip"
+接続中のWi-FiのSSID	networksetup -getairportnetwork en0
+localhostの8080番ポートが開いているか確認	nc -vz localhost 8080
+projectフォルダをtar.gzに圧縮	tar -czf project.tar.gz project
+backup.tgzを解凍	tar -xzf backup.tgz
+archive.tar.gzの中身を一覧	tar -tzf archive.tar.gz
+docsフォルダをdocs.zipにまとめる	zip -r docs.zip docs
+files.zipをfilesフォルダに解凍	unzip files.zip -d files
+gitの変更状況を短く表示	git status -s
+ステージされた差分を表示	git diff --staged
+直前のコミットを取り消して変更は残す	git reset --soft HEAD~1
+feature/loginブランチを作って切り替え	git switch -c feature/login
+ブランチを最終更新順に表示	git branch --sort=-committerdate
+コントリビューター別のコミット数	git shortlog -sn
+全ブランチのログをグラフで表示	git log --oneline --graph --all
+直近10件のコミットを1行ずつ	git log --oneline -n 10
+今いるブランチの名前	git branch --show-current
+app.pyの変更履歴を差分付きで	git log --follow -p -- app.py
+リモートのURLを確認	git remote -v
+起動中のdockerコンテナ一覧	docker ps
+使われていないdockerイメージを削除	docker image prune -a
+remove all stopped docker containers	docker container prune -f
+Pythonの仮想環境を作って有効化	python3 -m venv .venv && source .venv/bin/activate
+ポート8000で簡易HTTPサーバを起動	python3 -m http.server 8000
+Homebrewのパッケージを全部更新	brew update && brew upgrade
+今日の日付をYYYYMMDD形式で	date +%Y%m%d
+昨日の日付	date -v-1d +%Y-%m-%d
+現在のUNIXタイムスタンプ	date +%s
+ランダムなパスワードを生成	openssl rand -base64 24
+UUIDを生成	uuidgen
+movie.mp4のMD5	md5 movie.mp4
+image.isoのSHA256チェックサム	shasum -a 256 image.iso
+logo.pngをbase64エンコード	base64 -i logo.png
+PATHを1行ずつ表示	print -l $path
+report.txtの行数	wc -l < report.txt
+python3の場所	which python3
+2秒ごとにディスク使用量を表示	while true; do clear; df -h; sleep 2; done
+photo.jpgの長辺を1024pxに縮小	sips -Z 1024 photo.jpg
+photo.heicをpngに変換	sips -s format png photo.heic --out photo.png
+5分後に作業完了と読み上げる	sleep 300 && say "作業完了"
+一番大きいファイル	ls -lS
+最近変更されたファイル15件	ls -t | head -n 15
+access.logのIPアドレスを多い順に集計	awk '{print $1}' access.log | sort | uniq -c | sort -rn | head -n 10
+jsonファイルを整形	jq . data.json
+30秒待ってから通知する	sleep 30 && osascript -e 'display notification "完了" with title "fmc"'
+Macがスリープしないようにする	caffeinate -d
+起動中のコンテナ	docker ps
+3日前の日付	date -v-3d +%Y-%m-%d
+ゴミ箱の中身を数える	ls ~/.Trash | wc -l
+mp3を再生	afplay song.mp3
+フォルダを比較	diff -r dirA dirB
+フォルダを作って移動	mkdir work && cd work
+4日以内に更新された.rbファイルを探す	find . -type f -name "*.rb" -mtime -4
+コミット数の多い人の順に並べる	git shortlog -sn
+ホームで容量の大きいフォルダ上位3件	du -sh ~/* | sort -rh | head -n 3
+すべての.cssファイルのredをblueに置き換え	find . -type f -name "*.css" -exec sed -i '' 's/red/blue/g' {} +
+cache以下で14日より古い.jsonファイルを削除	find cache -type f -name "*.json" -mtime +14 -delete
+何コアのCPUか調べる	sysctl -n hw.ncpu
+ありがとう	NOT_A_COMMAND
+what is the capital of France	NOT_A_COMMAND
+お腹がすいた	NOT_A_COMMAND

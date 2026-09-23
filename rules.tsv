@@ -1,0 +1,24 @@
+# 意味的な検証ルール (fmc.zsh の _fmc_validate が読み込む)
+# 列: 依頼の正規表現	依頼の除外正規表現	コマンドの正規表現	コマンドの除外正規表現	モデルへの指摘文
+# 正規表現は ERE。依頼は小文字化して照合する。条件なしは "-"
+# 特定の評価問題の正解を書くのではなく、macOS の一般的な知識として正しい指摘にすること
+-	削除|消|除去|捨て|掃除|片付|空に|remove|delete|clean|erase|wipe|prune|rm	(^|[;&|({[:space:]])(rm|rmdir)[[:space:]]|[[:space:]]-delete([[:space:]]|$)	-	the request did not ask to delete anything; do not use rm or -delete
+前|ago|past	後|later|future	date[[:space:]]+-v[[:space:]]*\+?[0-9]	-	the request asks for a past date; "date -v +Nd" (or -v Nd) is a future date, use "date -v-Nd"
+-	-	date[[:space:]]+\+.*[[:space:]]-v	-	BSD date: put -v before the format, e.g. "date -v +3d +%Y-%m-%d"
+-	重複|duplicate|unique|ユニーク|dedup	(^|[;&|({[:space:]])sort[[:space:]]+-[a-zA-Z]*u	-	the request did not ask to remove duplicates; use plain "sort" without -u
+ディレクトリ|フォルダ|directory|folder	-	(^|[;&|({[:space:]])diff[[:space:]]	diff[[:space:]]+-[a-zA-Z]*r	the request compares directories; use "diff -r dir1 dir2" for recursive comparison
+起動中|動いて|running|active	-	docker ps -q?a	-	"docker ps -a" includes stopped containers; the request asks for running ones, use "docker ps" without -a
+ゴミ箱|trash	-	-	\.Trash	the request mentions the Trash; on macOS it is at ~/.Trash
+deriveddata	-	-	Library/Developer/Xcode/DerivedData	Xcode DerivedData is at ~/Library/Developer/Xcode/DerivedData on macOS
+-	-	/etc/resolv\.conf	-	on macOS /etc/resolv.conf does not show every resolver; use "scutil --dns" to show the DNS configuration
+時刻|時間|time|now	タイムスタンプ|timestamp|unix	date[[:space:]]+(-[a-zA-Z]+[[:space:]]+)?\+%s	-	the request asks for the time of day; use a human-readable format like date '+%Y-%m-%d %H:%M'
+-	-	shortlog.*--author=?([[:space:]]|$)	-	"git shortlog --author" needs an author name; to rank authors use "git shortlog -sn" without --author
+整形|見やすく|pretty|format	-	jq[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*["']?\.[A-Za-z_]	-	the request asks to pretty-print the whole document; use "jq . file.json" instead of a field filter
+[0-9]+[[:space:]]?秒後に|after[[:space:]]+[0-9]+	-	&	sleep[[:space:]]	the request asks to delay the action; use "sleep N && command" instead of backgrounding with &
+移動|into	-	mv[[:space:]]+[^[:space:]]+/\*[[:space:]]+\.	-	the request asks to enter the directory; use "cd dir" (mv would move the files out of it)
+最近|recent	-	ls[[:space:]]+-[a-zA-Z0-9]*t[a-zA-Z0-9]*[^|]*\|[^|]*tail	-	the request asks for the most recent files; "tail" shows the oldest ones, use "head" after "ls -t"
+メモリ|memory	sysctl	(^|[;&|[:space:]])sysctl[[:space:]]	-	use "vm_stat" (or "top -l 1") for memory usage, not sysctl
+(大きい|largest|biggest).*(ファイル|file)|(ファイル|file).*(大きい|largest|biggest)	-	ls[[:space:]]+-[a-zA-Z]*l[a-zA-Z]*h.*sort	ls[[:space:]]+-[a-zA-Z]*S	"ls -lh | sort" cannot sort human-readable sizes; use "ls -lS" (ls sorts by size natively)
+(ランキング|ranking|rank|多い順).*(著者|作者|author|contributor|コントリビューター)|(著者|作者|author|contributor|コントリビューター).*(ランキング|ranking|rank|多い順)	-	git[[:space:]]+log	shortlog	to rank authors by commit count use "git shortlog -sn", not "git log"
+(最近|recent).*(変更|modified|changed)|(変更|modified|changed).*(最近|recent)	-	git[[:space:]]+ls-files	-	"git ls-files" lists tracked files, not by modification time; use "ls -t | head -n N"
+スリープ.*(防止|させない|しない|止め)|(prevent|keep|stop).*(sleep|awake)	-	-	caffeinate	to keep the Mac awake use "caffeinate" (e.g. "caffeinate -d" or "caffeinate -t SECONDS")
