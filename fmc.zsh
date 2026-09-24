@@ -943,6 +943,9 @@ Command:"
 # Zsh Line Editor (ZLE) ウィジェット & キーバインド (ポップアップ入力)
 # ============================================================================
 
+# ウィジェット多重起動防止フラグ
+typeset -g _FMC_WIDGET_ACTIVE=0
+
 # ミニバッファ入力ヘルパー (ESC / Ctrl-C で即時キャンセル、入力バッファの完全復元を保証)
 _fmc_read_minibuf() {
   emulate -L zsh
@@ -959,14 +962,18 @@ _fmc_read_minibuf() {
     bindkey -M _fmc_minibuf '\e' send-break
     bindkey -M _fmc_minibuf '^C' send-break
     bindkey -M _fmc_minibuf '^G' send-break
+    # ミニバッファ入力中はウィジェット呼び出しキーを無効化 (二重起動防止)
+    if [[ -n "$FMC_KEYBIND" ]]; then
+      bindkey -M _fmc_minibuf "$FMC_KEYBIND" undefined-key
+    fi
   fi
 
   local saved_buf="$BUFFER"
   local saved_cur="$CURSOR"
   integer stat=1
 
-  local pretext="$PREDISPLAY$LBUFFER$RBUFFER$POSTDISPLAY"$'\n'
-  local +h PREDISPLAY="$pretext$prompt_text"
+  # 過去の PREDISPLAY を累積させず、現在の入力行の直下にクリーンに表示する
+  local +h PREDISPLAY="${LBUFFER}${RBUFFER}"$'\n'"$prompt_text"
   local +h POSTDISPLAY=""
   local +h LBUFFER="$init_val"
   local +h RBUFFER=""
@@ -985,7 +992,9 @@ _fmc_read_minibuf() {
     stat=$?
     (( stat == 0 )) && REPLY="$BUFFER"
   } always {
-    # どのような理由で終了しても、必ず元の BUFFER と CURSOR を完全復元
+    # どのような理由で終了しても、PREDISPLAY をリセットし元の BUFFER と CURSOR を完全復元
+    PREDISPLAY=""
+    POSTDISPLAY=""
     zle undo $changeno 2>/dev/null || true
     UNDO_LIMIT_NO=$savelim
     BUFFER="$saved_buf"
@@ -1000,66 +1009,74 @@ _fmc_widget() {
   emulate -L zsh
   setopt extended_glob
 
-  local initial_query="$BUFFER"
-  local initial_cursor="$CURSOR"
-  local icon="${FMC_ICON:-✨}"
-  # ANSI エスケープを含めないクリーンなプロンプト (文字化け・折り返し崩れ防止)
-  local prompt_str="╭─ ${icon} fmc (自然言語からコマンド生成 / Esc: 取消)"$'\n'"╰─▶ 依頼: "
+  # すでにウィジェット実行中なら多重起動しない
+  (( _FMC_WIDGET_ACTIVE )) && return 0
+  _FMC_WIDGET_ACTIVE=1
 
-  local REPLY
-  if ! _fmc_read_minibuf "$prompt_str" "$initial_query"; then
-    BUFFER="$initial_query"
-    CURSOR="$initial_cursor"
-    zle -M "fmc: キャンセルしました"
-    return 0
-  fi
+  {
+    local initial_query="$BUFFER"
+    local initial_cursor="$CURSOR"
+    local icon="${FMC_ICON:-✨}"
+    # ANSI エスケープを含めないクリーンなプロンプト (文字化け・折り返し崩れ防止)
+    local prompt_str="╭─ ${icon} fmc (自然言語からコマンド生成 / Esc: 取消)"$'\n'"╰─▶ 依頼: "
 
-  local query="$REPLY"
-  query="${query##[[:space:]]#}"
-  query="${query%%[[:space:]]#}"
+    local REPLY
+    if ! _fmc_read_minibuf "$prompt_str" "$initial_query"; then
+      BUFFER="$initial_query"
+      CURSOR="$initial_cursor"
+      zle -M "fmc: キャンセルしました"
+      return 0
+    fi
 
-  if [[ -z "$query" ]]; then
-    BUFFER="$initial_query"
-    CURSOR="$initial_cursor"
-    return 0
-  fi
+    local query="$REPLY"
+    query="${query##[[:space:]]#}"
+    query="${query%%[[:space:]]#}"
 
-  # 生成中ステータスを表示して即時再描画 (zle -M は ANSI エスケープを解釈しないためプレーンテキストで渡す)
-  local backend_msg=""
-  [[ ${FMC_BACKEND:-local} == cloud ]] && backend_msg=" (クラウド)"
-  zle -M "${icon} コマンドを生成中${backend_msg}..."
-  zle -R
+    if [[ -z "$query" ]]; then
+      BUFFER="$initial_query"
+      CURSOR="$initial_cursor"
+      return 0
+    fi
 
-  # fmc -p でコマンドを生成 (stdout: コマンド, stderr: 警告/エラーメッセージ)
-  local err_file=$(mktemp -t fmc_widget_err)
-  local cmd
-  cmd=$(fmc -p "$query" 2>"$err_file")
-  local ret=$?
-  local err_msg=""
-  [[ -f "$err_file" ]] && err_msg=$(<"$err_file")
-  rm -f "$err_file"
+    # 生成中ステータスを表示して即時再描画 (zle -M は ANSI エスケープを解釈しないためプレーンテキストで渡す)
+    local backend_msg=""
+    [[ ${FMC_BACKEND:-local} == cloud ]] && backend_msg=" (クラウド)"
+    zle -M "${icon} コマンドを生成中${backend_msg}..."
+    zle -R
 
-  # エラーメッセージから ANSI エスケープシーケンスを完全に除去
-  [[ -n "$err_msg" ]] && err_msg=$(print -r -- "$err_msg" | sed -E $'s/\033\\[[0-9;]*[a-zA-Z]//g')
-  err_msg="${err_msg##[[:space:]]#}"
-  err_msg="${err_msg%%[[:space:]]#}"
-  err_msg="${err_msg//$'\n'/; }"
+    # fmc -p でコマンドを生成 (stdout: コマンド, stderr: 警告/エラーメッセージ)
+    local err_file=$(mktemp -t fmc_widget_err)
+    local cmd
+    cmd=$(fmc -p "$query" 2>"$err_file")
+    local ret=$?
+    local err_msg=""
+    [[ -f "$err_file" ]] && err_msg=$(<"$err_file")
+    rm -f "$err_file"
 
-  if (( ret == 0 )); then
-    BUFFER="$cmd"
-    CURSOR=${#BUFFER}
-    zle -M "✅ 生成完了 (Enter で実行、編集も可能)"
-  elif (( ret == 2 )); then
-    # 生成成功したが検証の警告あり
-    BUFFER="$cmd"
-    CURSOR=${#BUFFER}
-    zle -M "${err_msg:-⚠️  検証で問題が見つかりました}"
-  else
-    # 失敗、NOT_A_COMMAND、危険コマンドブロック
-    BUFFER="$initial_query"
-    CURSOR="$initial_cursor"
-    zle -M "${err_msg:-❌ コマンドの生成に失敗しました}"
-  fi
+    # エラーメッセージから ANSI エスケープシーケンスを完全に除去
+    [[ -n "$err_msg" ]] && err_msg=$(print -r -- "$err_msg" | sed -E $'s/\033\\[[0-9;]*[a-zA-Z]//g')
+    err_msg="${err_msg##[[:space:]]#}"
+    err_msg="${err_msg%%[[:space:]]#}"
+    err_msg="${err_msg//$'\n'/; }"
+
+    if (( ret == 0 )); then
+      BUFFER="$cmd"
+      CURSOR=${#BUFFER}
+      zle -M "✅ 生成完了 (Enter で実行、編集も可能)"
+    elif (( ret == 2 )); then
+      # 生成成功したが検証の警告あり
+      BUFFER="$cmd"
+      CURSOR=${#BUFFER}
+      zle -M "${err_msg:-⚠️  検証で問題が見つかりました}"
+    else
+      # 失敗、NOT_A_COMMAND、危険コマンドブロック
+      BUFFER="$initial_query"
+      CURSOR="$initial_cursor"
+      zle -M "${err_msg:-❌ コマンドの生成に失敗しました}"
+    fi
+  } always {
+    _FMC_WIDGET_ACTIVE=0
+  }
 }
 
 # インタラクティブシェルの場合のみ ZLE ウィジェットとキーバインドを登録
