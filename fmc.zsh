@@ -114,7 +114,10 @@ typeset -g _FMC_DESTRUCTIVE_REGEX='(^|[;&|(`[:space:]])(rm|rmdir|mv|kill|pkill|k
 
 # --- ヘルパー関数 ---
 
-_fmc_c() { print -rn -- "${_fmc_colors[$1]}" }
+_fmc_c() {
+  ${print_only:-false} && return
+  print -rn -- "${_fmc_colors[$1]}"
+}
 
 _fmc_log_history() {
   emulate -L zsh
@@ -1036,8 +1039,8 @@ _fmc_widget() {
   [[ -f "$err_file" ]] && err_msg=$(<"$err_file")
   rm -f "$err_file"
 
-  # エラーメッセージから ANSI エスケープシーケンスを除去
-  err_msg=${err_msg//$'\033'\\[[0-9;]#[a-zA-Z]/}
+  # エラーメッセージから ANSI エスケープシーケンスを完全に除去
+  [[ -n "$err_msg" ]] && err_msg=$(print -r -- "$err_msg" | sed -E $'s/\033\\[[0-9;]*[a-zA-Z]//g')
   err_msg="${err_msg##[[:space:]]#}"
   err_msg="${err_msg%%[[:space:]]#}"
   err_msg="${err_msg//$'\n'/; }"
