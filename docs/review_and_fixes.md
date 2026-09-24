@@ -189,50 +189,60 @@ if [[ -f "$user_examples_file" ]]; then
 fi
 ```
 
-# 3回目のレビューと機能向上プラン (2026-09-23)
-
-今回のレビューでは、機能の向上と汎化性能（特に eval3.tsv での正答率）の改善を主眼として評価を行いました。
-
-## 機能向上のための改善プラン
-
-### 1. macOS固有コマンドの知識拡充
-- 課題: 画像のメタデータ取得、画面ロック、Wi-Fiのオフなど、macOS固有の操作でLinux向けのコマンドが生成される傾向がある。
-- 対策: rules.tsv にmacOS固有のシステム操作に関するルールを追加する。
-
-### 2. インタラクティブな学習機能の追加
-- 課題: 未知のタスクに対する汎化性能が頭打ちになっている。
-- 対策: ユーザーが修正して実行したコマンドを記録し、次回のプロンプトに活用するフィードバックループを実装する。
-
 ---
 
-## 実装コード
+# 4回目のレビューと修正 (2026-09-24)
 
-### 1. rules.tsv への追加ルール
-画面.*(ロック|lock)	-	-	pmset|CGSession	to lock the screen on macOS, use "pmset displaysleepnow" or "osascript"
-音量.*(ミュート|mute)	-	-	amixer|pactl	to mute volume on macOS, use "osascript -e 'set volume with output muted'"
-Wi-Fi.*(オフ|off)	-	-	nmcli|ifconfig	to turn off Wi-Fi on macOS, use "networksetup -setairportpower en0 off"
-画像.*(サイズ|幅|高さ)	-	-	identify|exiftool	to get image dimensions on macOS, use "sips -g pixelWidth -g pixelHeight"
+対象はコミット 4767337 (ZLE ウィジェットの多重起動防止) 時点のコードです。
 
-### 2. fmc.zsh への学習機能の追加
-# ユーザーの実行コマンドを学習する関数
-_fmc_learn_from_user() {
-  local request="$1"
-  local executed_command="$2"
-  local user_examples_file="${FMC_USER_EXAMPLES_FILE:-$HOME/.fmc_user_examples.tsv}"
-  
-  if [[ -f "$user_examples_file" ]] && grep -q "^${request}\t" "$user_examples_file"; then
-    return
-  fi
-  
-  echo "${request}\t${executed_command}" >> "$user_examples_file"
-}
+## レビューで見つかった問題
 
-### 3. 例文読み込み機能の拡張
-local user_examples_file="${FMC_USER_EXAMPLES_FILE:-$HOME/.fmc_user_examples.tsv}"
-if [[ -f "$user_examples_file" ]]; then
-  while IFS=$'\t' read -r q a; do
-    [[ -z "$q" || "$q" == \#* ]] && continue
-    _fmc_ex_q+=("$q")
-    _fmc_ex_a+=("$a")
-  done < "$user_examples_file"
-fi
+### 1. バグ: `for`/`while`/`if` の本体のコマンドが検証から漏れる
+
+`_fmc_parse_command` の制御語処理で、`do` と `then` が `expect==1` のときだけ `expect=1` に設定していました。しかし `for`/`while`/`until` は `expect=0` に設定するため、改行で区切られたコマンド (セミコロン無し) ではループ・分岐の本体のコマンドが検出されませんでした。
+
+```zsh
+# 再現 (修正前)
+$ _fmc_parse_command $'for f in *.txt\ndo mv -- "$f"\ndone'
+$ echo "${cw_cmds[@]}"
+# → 空 (mv が検出されない)
+
+$ _fmc_parse_command $'for f in *.txt; do mv -- "$f"; done'
+$ echo "${cw_cmds[@]}"
+# → mv (セミコロンがある場合は正常)
+```
+
+`zsh -n` は改行を構文の区切りとして認めるため構文チェックは通過しますが、`${(z)}` によるトークン化では改行が消えるため、パース段階で `do` の前に `;` トークンが来ず `expect` が 1 に戻りませんでした。結果、本体のコマンドのフラグが man ページと照合されず、GNU 専用フラグや存在しないフラグが検出されませんでした。
+
+### 2. `review_and_fixes.md` に重複セクション
+
+「3回目のレビューと機能向上プラン」がファイル内に 2 回登場していました (内容もほぼ同一)。2 番目のコピーを削除しました。
+
+## 修正内容
+
+### バグ修正 (`fmc.zsh`)
+
+- `do` と `then` を他の制御語から分離し、**無条件で** `expect=1` に設定するようにしました。`for`/`while`/`until` による `expect=0` を上書きし、改行区切りのコマンドでも本体のコマンドを検出できるようにしました。
+
+### 回帰テスト (`check.zsh`)
+
+- パーサーを直接テストするセクションを追加 (4 件): 改行区切りの `for...do...done`、`while...do...done`、`if...then...fi`、`for` 内の `grep -rn` が正しく検出されることを確認します。
+
+### ドキュメント
+
+- 重複していた「3回目のレビュー」セクションを削除しました。
+
+## テスト結果
+
+`zsh check.zsh` はすべて成功 (例文 135 件、ルール 20 件、個別ケース 32 件 + パーサー 4 件 = 36 件、重複 0 件)。
+
+## 今後の改善案
+
+- 例文バンク・`rules.tsv` の補強: eval3 の誤り傾向 (時間の単位、macOS 固有操作、`~/` の解決、glob の書き方) に対して、eval3 とは別の依頼で例文を追加し、新しい確認用セット (eval4) で測る。
+- `_FMC_CMD_HINTS` に `convert` → `sips`、`identify`/`exiftool` → `mdls`/`sips -g all` を追加。
+- `_FMC_VALUE_OPTS` に `head -n`、`tail -n`、`grep -n`、`sed -e`、`tar -f` などを追加し、値が `-` で始まる場合のフラグ誤認を防ぐ。
+- `rules.tsv` に画面ロック、ミュート、Wi-Fi 切り替え、画像メタデータ、未来の日付のルールを追加 (eval3 の問題文そのものではなく、同じ知識を別のパターンで書く)。
+- `.gitignore` の追加 (`.agent-shell/`、`.DS_Store` など)。
+- `ask-cloud-model-serve.py` の扱いを明確にする (README に載せるか、`tools/` に退避する)。
+- `--help` の `-p` 説明に終了コード 2 の言及を追加。
+- ZLE ウィジェット: クラウドバックエンドの生成中に `zle -M` で待機時間を更新する。

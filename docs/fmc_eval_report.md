@@ -2,7 +2,7 @@
 
 - 実施日: 2026-09-23
 - 環境: macOS 27.0、`fm` (Apple Foundation Models CLI、オンデバイスの system モデル)
-- 比較対象: 改善前 = コミット 841df99 の `fmc.zsh`、改善後 = 現在の `fmc.zsh` + `examples.tsv` + `rules.tsv`
+- 比較対象: 改善前 = コミット 841df99 の `fmc.zsh`、改善後 = 現在の `fmc.zsh` + `data/examples.tsv` + `data/rules.tsv`
 - 評価セットの問題文は、コミット 841df99 で自動整形により入った空白 (「3 日」など) を取り除いた元の形に戻して測っています
 
 ## 結果
@@ -45,7 +45,7 @@
 
 ### 例文バンクと評価セットの重複チェック
 
-`zsh check.zsh` が、例文バンクと全評価セットの問題文を空白・大文字小文字を無視して突き合わせ、一致するものがあれば失敗にします。特徴語がほぼ同じ例文は警告として表示します。
+`zsh tests/check.zsh` が、例文バンクと全評価セットの問題文を空白・大文字小文字を無視して突き合わせ、一致するものがあれば失敗にします。特徴語がほぼ同じ例文は警告として表示します。
 
 ### 採点の限界
 
@@ -114,10 +114,10 @@
 ## 再現方法
 
 ```zsh
-zsh check.zsh                                   # モデルを使わない回帰テスト (数秒)
-FMC_HISTORY_FILE=/dev/null zsh score.zsh fmc.zsh eval.tsv
-FMC_HISTORY_FILE=/dev/null zsh score.zsh fmc.zsh eval2.tsv
-FMC_HISTORY_FILE=/dev/null zsh score.zsh fmc.zsh eval3.tsv
+zsh tests/check.zsh                             # モデルを使わない回帰テスト (数秒)
+FMC_HISTORY_FILE=/dev/null zsh tests/score.zsh fmc.zsh tests/eval.tsv
+FMC_HISTORY_FILE=/dev/null zsh tests/score.zsh fmc.zsh tests/eval2.tsv
+FMC_HISTORY_FILE=/dev/null zsh tests/score.zsh fmc.zsh tests/eval3.tsv
 ```
 
 調整できる環境変数: `FMC_MAX_RETRIES` (再生成回数、既定 3)、`FMC_NUM_EXAMPLES` (few-shot の例文数、既定 8)。

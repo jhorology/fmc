@@ -1,5 +1,5 @@
 #!/bin/zsh
-# 使い方: zsh check.zsh [fmc.zsh]
+# 使い方: zsh tests/check.zsh [fmc.zsh]
 #   モデル (fm) を呼ばずに検証・自動修正のロジックを確かめる回帰テスト。失敗があれば終了コード 1
 #   1. 例文バンクの正解コマンドに、自動修正と検証が何もしないこと (誤検知が無いこと)
 #   2. rules.tsv の正規表現がすべてコンパイルできること
@@ -7,7 +7,8 @@
 #   4. 例文バンクと評価セットに同じ問題が無いこと (近いものは警告)
 emulate -L zsh
 setopt extended_glob
-src=${1:-${0:A:h}/fmc.zsh}
+src=${1:-${0:A:h}/../fmc.zsh}
+[[ -f $src ]] || src=${0:A:h}/fmc.zsh
 source $src
 typeset -i fail=0 warn=0
 typeset -a f qf ef inter
@@ -77,6 +78,26 @@ no option -z	a.txtの先頭	head -z a.txt
 delete anything	2日以内に変更された.mdファイルを一覧	find . -name "*.md" -mtime -2 -exec rm -f {} +
 tail	show the 20 most recently modified files	ls -1t | tail -n 20
 EOF
+
+# パーサー: 改行区切りの for / while / if 本体のコマンドを検出できるか
+# (zsh -n は改行を区切りとして認めるが、${(z)} トークン化では改行が消えるため
+#  セミコロン無し do / then の経路を直接検証する)
+parse_case() {
+  (( cases++ ))
+  local want=$1
+  local -a cmds=()
+  _fmc_parse_command "$2"
+  for w in "${(@)cw_cmds}"; do cmds+=($w); done
+  local c
+  for c in $cmds; do
+    [[ $c == $want ]] && return
+  done
+  ng "パーサー: $want が検出されない: ${2//$'\n'/⏎} => ${cmds[@]}"
+}
+parse_case 'mv' $'for f in *.txt\ndo mv -- "$f" "$f.md"\ndone'
+parse_case 'df' $'while true\ndo df -h\nsleep 2\ndone'
+parse_case 'echo' $'if [ -f x.txt ]\nthen echo exists\nfi'
+parse_case 'grep' $'for d in */\ndo grep -rn TODO "$d"\ndone'
 
 # 自動修正
 autofix_case() {

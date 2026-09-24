@@ -71,7 +71,7 @@ echo 'source ~/fmc/fmc.plugin.zsh' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-例文バンク (`examples.tsv`) と検証ルール (`rules.tsv`) はスクリプトと同じディレクトリから自動解決されるため、リポジトリをそのままクローンして読み込むだけで使えます。
+例文バンク (`data/examples.tsv`) と検証ルール (`data/rules.tsv`) はスクリプトと同じディレクトリまたは `data/` から自動解決されるため、リポジトリをそのままクローンして読み込むだけで使えます。
 
 ## 使い方
 
@@ -124,8 +124,8 @@ fmc "list the 10 largest files in this directory"   # 英語でも可
 | `FMC_MAX_HISTORY` | `100` | 履歴として残す最大行数 |
 | `FMC_MAX_RETRIES` | `3` | 検証で問題が見つかったときの再生成回数 |
 | `FMC_NUM_EXAMPLES` | `8` | few-shot としてモデルに渡す例文の最大数 |
-| `FMC_EXAMPLES_FILE` | `fmc.zsh` と同じ場所の `examples.tsv` | 例文バンク |
-| `FMC_RULES_FILE` | `fmc.zsh` と同じ場所の `rules.tsv` | 意味的な検証ルール |
+| `FMC_EXAMPLES_FILE` | `data/examples.tsv` | 例文バンク |
+| `FMC_RULES_FILE` | `data/rules.tsv` | 意味的な検証ルール |
 | `FMC_BACKEND` | `local` | 生成に使うモデル。`local` (オンデバイス) か `cloud` (ショートカット経由) |
 | `FMC_SHORTCUT_NAME` | `ask-cloud-model` | `cloud` で呼ぶショートカットの名前 |
 | `FMC_CLOUD_NUM_EXAMPLES` | `0` | `cloud` のときに渡す例文の数 |
@@ -139,6 +139,8 @@ fmc "list the 10 largest files in this directory"   # 英語でも可
    - Details で **Use as Quick Action** などをオンにし、**Receive [Text] input** にする
    - **Use Model** アクションを追加し、モデルを **Cloud**、プロンプトを **Shortcut Input** だけにする
    - **Stop and Output** で **Use Model** の **Response** を返す
+
+   ![ask-cloud-model ショートカット設定例](docs/images/ask-cloud-model.png)
 2. 動作を確認します。
 
    ```zsh
@@ -176,7 +178,7 @@ fmc "list the 10 largest files in this directory"   # 英語でも可
 オンデバイスのモデルは小さく、単純に頼むだけでは Linux のコマンドや存在しないフラグを出しがちです。
 そこで、モデルの前後に次の処理を挟んでいます。
 
-1. **例文の検索**: 例文バンク `examples.tsv` (macOS で動く約140件) から、依頼に近いものを選んでモデルに渡します。日本語はカタカナ語・漢字語の単位、英語は単語単位で比べ、「削除 / 消す / remove」のような言い換えも同じ語として扱います。
+1. **例文の検索**: 例文バンク `data/examples.tsv` (macOS で動く約140件) から、依頼に近いものを選んでモデルに渡します。日本語はカタカナ語・漢字語の単位、英語は単語単位で比べ、「削除 / 消す / remove」のような言い換えも同じ語として扱います。
 2. **生成**: 短い instructions と選んだ例文を付けて、`fm respond` で1行のコマンドを生成します。クラウドのモデルを使う場合は、instructions と依頼文をショートカットに渡します (例文は既定で渡しません)。
 3. **自動修正**: `find -o` の括弧、`sed -i ''`、`lsof -i :PORT`、`open -a "Google Chrome"` など、定型的な誤りは直接直します。
 4. **検証**:
@@ -185,7 +187,7 @@ fmc "list the 10 largest files in this directory"   # 英語でも可
    - 使っているフラグが man ページに載っているか (macOS 標準コマンドのみ)
    - GNU 版にしかないオプションを使っていないか
    - 依頼にある数値・ファイル名・場所がコマンドに入っているか
-   - macOS の知識不足による意味的な誤り (`rules.tsv` に1行1ルールで記述。例: 過去の日付なのに `date -v+3d`、ゴミ箱の場所)
+   - macOS の知識不足による意味的な誤り (`data/rules.tsv` に1行1ルールで記述。例: 過去の日付なのに `date -v+3d`、ゴミ箱の場所)
    - 頼まれていないパッケージのインストールや、ホーム・ルートへの対象の拡大をしていないか
    - 危険なコマンドではないか
 5. **再生成**: 問題があれば理由を添えて作り直させます (既定で最大3回)。解消しなかった場合は、問題点を警告として表示したうえで最も問題の少ない候補を出します。
@@ -197,32 +199,32 @@ man ページから読み取ったフラグ一覧は `~/.cache/fmc/manflags/` �
 モデルを使わない回帰テストと、正解パターン付きの評価セットがあります。
 
 ```zsh
-zsh check.zsh                                             # 検証・自動修正の回帰テスト (数秒)
-FMC_HISTORY_FILE=/dev/null zsh score.zsh fmc.zsh eval.tsv
-FMC_HISTORY_FILE=/dev/null zsh score.zsh fmc.zsh eval2.tsv
-FMC_HISTORY_FILE=/dev/null zsh score.zsh fmc.zsh eval3.tsv
+zsh tests/check.zsh                                             # 検証・自動修正の回帰テスト (数秒)
+FMC_HISTORY_FILE=/dev/null zsh tests/score.zsh fmc.zsh tests/eval.tsv
+FMC_HISTORY_FILE=/dev/null zsh tests/score.zsh fmc.zsh tests/eval2.tsv
+FMC_HISTORY_FILE=/dev/null zsh tests/score.zsh fmc.zsh tests/eval3.tsv
 ```
 
-`check.zsh` は次のことを確かめ、失敗があれば終了コード 1 を返します。
+`tests/check.zsh` は次のことを確かめ、失敗があれば終了コード 1 を返します。
 
 - 例文バンクの正解コマンドに対して、自動修正が何も書き換えず、検証が何も指摘しないこと
-- `rules.tsv` の正規表現がすべて正しいこと
+- `data/rules.tsv` の正規表現がすべて正しいこと
 - 個別のテストケース (誤りを指摘できるか、正しいものを通すか、危険なコマンドをブロックするか)
 - 例文バンクと評価セットに同じ問題が無いこと
 
 | 評価セット | 用途 | 現在 |
 |---|---|---|
-| `eval.tsv` (40問) | 調整用 | 37/40 |
-| `eval2.tsv` (30問) | 調整用 | 27/30 |
-| `eval3.tsv` (30問) | 調整に使わない確認用 | 13/30 (クラウド: 28/30) |
+| `tests/eval.tsv` (40問) | 調整用 | 37/40 |
+| `tests/eval2.tsv` (30問) | 調整用 | 27/30 |
+| `tests/eval3.tsv` (30問) | 調整に使わない確認用 | 13/30 (クラウド: 28/30) |
 
-クラウドのモデルで測るときは `FMC_BACKEND=cloud zsh score.zsh fmc.zsh eval3.tsv` のように実行します (利用上限に注意)。
+クラウドのモデルで測るときは `FMC_BACKEND=cloud zsh tests/score.zsh fmc.zsh tests/eval3.tsv` のように実行します (利用上限に注意)。
 
-各行は「リクエスト<TAB>正解コマンドの正規表現 (ERE)」の形式です。`score.zsh` は点数のほかに、平均生成回数と、検証の問題が残ったまま出力された件数も表示します。問題ごとの結果や採点の限界は [fmc_eval_report.md](fmc_eval_report.md) にまとめています。
+各行は「リクエスト<TAB>正解コマンドの正規表現 (ERE)」の形式です。`tests/score.zsh` は点数のほかに、平均生成回数と、検証の問題が残ったまま出力された件数も表示します。問題ごとの結果や採点の限界は [docs/fmc_eval_report.md](docs/fmc_eval_report.md) にまとめています。
 
-汎化性能を表すのは `eval3.tsv` の点数だけです。`eval3.tsv` の問題やそれに近い依頼を例文バンクや `rules.tsv` に入れると確認用として機能しなくなるので、入れないでください。eval3 の結果を見て調整したくなったら、先に新しい確認用セットを作ってください。
+汎化性能を表すのは `tests/eval3.tsv` の点数だけです。`tests/eval3.tsv` の問題やそれに近い依頼を例文バンクや `data/rules.tsv` に入れると確認用として機能しなくなるので、入れないでください。eval3 の結果を見て調整したくなったら、先に新しい確認用セットを作ってください。
 
-モデルは入力の細部 (例文の並びや空行など) で出力が変わります。instructions、例文バンク、ルールを変更したら、`check.zsh` とすべての評価セットで測り直してください。
+モデルは入力の細部 (例文の並びや空行など) で出力が変わります。instructions、例文バンク、ルールを変更したら、`tests/check.zsh` とすべての評価セットで測り直してください。
 
 ## 注意と制限
 
@@ -231,15 +233,28 @@ FMC_HISTORY_FILE=/dev/null zsh score.zsh fmc.zsh eval3.tsv
 - `git` や `docker` などサブコマンドを持つツールのフラグは、man ページとの照合をしていません。
 - 1回の生成には 0.5〜1 秒ほどかかり、再生成が入るとその分長くなります。
 
-## ファイル構成
+## ディレクトリ構成
 
-| ファイル | 内容 |
-|---|---|
-| `fmc.zsh` | 本体 (`source` して使う) |
-| `examples.tsv` | 例文バンク (リクエスト<TAB>コマンド) |
-| `rules.tsv` | 意味的な検証ルール (書式はファイル先頭のコメントを参照) |
-| `eval.tsv`, `eval2.tsv`, `eval3.tsv` | 評価セット |
-| `score.zsh` | 採点スクリプト |
-| `check.zsh` | モデルを使わない回帰テスト |
-| `fmc_eval_report.md` | 評価レポート |
-| `review_and_fixes.md` | レビューと修正の記録 |
+```text
+.
+├── fmc.zsh                       # 本体 (source して使うシェル関数群)
+├── fmc.plugin.zsh                # zsh プラグインエントリーポイント
+├── data/
+│   ├── examples.tsv              # 例文バンク (リクエスト<TAB>コマンド)
+│   └── rules.tsv                 # 意味的な検証ルール
+├── tests/
+│   ├── check.zsh                 # モデルを使わない回帰テスト
+│   ├── score.zsh                 # 採点スクリプト
+│   ├── eval.tsv                  # 評価セット (調整用)
+│   ├── eval2.tsv                 # 評価セット (調整用)
+│   └── eval3.tsv                 # 評価セット (確認用・汎化測定)
+├── docs/
+│   ├── fmc_eval_report.md        # 評価レポート
+│   ├── review_and_fixes.md       # レビューと修正の記録
+│   └── images/
+│       └── ask-cloud-model.png   # ショートカット設定例の画像
+├── tools/
+│   └── ask-cloud-model-serve.py  # ショートカットの OpenAI 互換 API プロキシ
+├── LICENSE
+└── README.md
+```

@@ -26,8 +26,20 @@ FMC_HISTORY_FILE="${FMC_HISTORY_FILE:-${HOME}/.fmc_history}"
 FMC_MAX_HISTORY="${FMC_MAX_HISTORY:-100}"
 FMC_MAX_RETRIES="${FMC_MAX_RETRIES:-3}"
 FMC_NUM_EXAMPLES="${FMC_NUM_EXAMPLES:-8}"
-FMC_EXAMPLES_FILE="${FMC_EXAMPLES_FILE:-${_FMC_DIR}/examples.tsv}"
-FMC_RULES_FILE="${FMC_RULES_FILE:-${_FMC_DIR}/rules.tsv}"
+if [[ -z ${FMC_EXAMPLES_FILE:-} ]]; then
+  if [[ -f "${_FMC_DIR}/data/examples.tsv" ]]; then
+    FMC_EXAMPLES_FILE="${_FMC_DIR}/data/examples.tsv"
+  else
+    FMC_EXAMPLES_FILE="${_FMC_DIR}/examples.tsv"
+  fi
+fi
+if [[ -z ${FMC_RULES_FILE:-} ]]; then
+  if [[ -f "${_FMC_DIR}/data/rules.tsv" ]]; then
+    FMC_RULES_FILE="${_FMC_DIR}/data/rules.tsv"
+  else
+    FMC_RULES_FILE="${_FMC_DIR}/rules.tsv"
+  fi
+fi
 FMC_BACKEND="${FMC_BACKEND:-local}"
 FMC_SHORTCUT_NAME="${FMC_SHORTCUT_NAME:-ask-cloud-model}"
 FMC_CLOUD_NUM_EXAMPLES="${FMC_CLOUD_NUM_EXAMPLES:-0}"
@@ -341,9 +353,14 @@ _fmc_parse_command() {
         if [[ -n $cur ]]; then
           exec_outer=$cur expect=1 cur=""
         fi ;;
+      # do / then は無条件でコマンド位置にする
+      # (for / while / until が expect=0 にするため、セミコロン無しの
+      #  "for f in x do cmd" / "if cond then cmd" でも本体を検出する)
+      (do|then)
+        expect=1; cur="" ;;
       # 制御語・修飾語はコマンド位置 (expect==1) のときだけ次の語をコマンドとみなす
       # (echo if / echo time のような引数で誤判定しないようにする)
-      (then|do|else|elif|if|while|until|time|nohup|noglob|builtin|command|exec)
+      (else|elif|if|while|until|time|nohup|noglob|builtin|command|exec)
         (( expect )) && { expect=1; cur=""; } ;;
       (*)
         if (( expect )); then
@@ -727,8 +744,8 @@ fmc - Foundation Model Command translator
   FMC_MAX_HISTORY     最大履歴行数 (デフォルト: 100)
   FMC_MAX_RETRIES     検証エラー時の再生成回数 (デフォルト: 3)
   FMC_NUM_EXAMPLES    few-shot に使う例文の数 (デフォルト: 8)
-  FMC_EXAMPLES_FILE   例文バンク (デフォルト: fmc.zsh と同じ場所の examples.tsv)
-  FMC_RULES_FILE      意味的な検証ルール (デフォルト: fmc.zsh と同じ場所の rules.tsv)
+  FMC_EXAMPLES_FILE   例文バンク (デフォルト: data/examples.tsv)
+  FMC_RULES_FILE      意味的な検証ルール (デフォルト: data/rules.tsv)
   FMC_BACKEND         生成に使うモデル: local (fm、既定) / cloud (ショートカット経由)
   FMC_SHORTCUT_NAME   cloud で呼ぶショートカット名 (デフォルト: ask-cloud-model)
   FMC_CLOUD_NUM_EXAMPLES  cloud で渡す例文の数 (デフォルト: 0)
