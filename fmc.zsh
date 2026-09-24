@@ -943,55 +943,23 @@ _fmc_widget() {
   emulate -L zsh
   setopt extended_glob
 
-  local query=""
+  autoload -Uz read-from-minibuffer
+
   local initial_query="$BUFFER"
+  # ANSI エスケープを含めないクリーンなプロンプト (文字化け・折り返し崩れ防止)
+  local prompt_str="╭─ 🤖 fmc (自然言語からコマンド生成 / Esc: 取消)"$'\n'"╰─▶ 依頼: "
 
-  if command -v fzf &>/dev/null; then
-    # fzf を使った Atuin 風の角丸ポップアップウィンドウ
-    zle -I
-    local -a fzf_opts=(
-      --layout=reverse
-      --border=rounded
-      --border-label=" 🤖 fmc (自然言語からコマンド生成) "
-      --border-label-pos=3
-      --prompt="依頼 > "
-      --header="Enter: コマンド生成  /  Esc: 取消"
-      --info=hidden
-      --no-separator
-      --bind="enter:print-query"
-    )
-    if [[ -n "$TMUX" ]]; then
-      fzf_opts+=(--tmux=center,70%,30%)
-    else
-      fzf_opts+=(--height=30% --min-height=6)
-    fi
-    [[ -n "$initial_query" ]] && fzf_opts+=(--query="$initial_query")
-
-    local out
-    out=$(: | fzf "${fzf_opts[@]}" </dev/tty)
-    local ret=$?
-
-    if (( ret != 0 )); then
-      zle -R
-      return 0
-    fi
-    query="${out%%$'\n'*}"
-  else
-    # fzf がない場合のフォールバック (文字化けしないプレーンな ZLE ミニバッファ)
-    autoload -Uz read-from-minibuffer
-    local REPLY
-    if ! read-from-minibuffer "🤖 fmc 依頼: " "$initial_query"; then
-      zle -M "$(_fmc_c dim)fmc: キャンセルしました$(_fmc_c reset)"
-      return 0
-    fi
-    query="$REPLY"
+  local REPLY
+  if ! read-from-minibuffer "$prompt_str" "$initial_query"; then
+    zle -M "$(_fmc_c dim)fmc: キャンセルしました$(_fmc_c reset)"
+    return 0
   fi
 
+  local query="$REPLY"
   query="${query##[[:space:]]#}"
   query="${query%%[[:space:]]#}"
 
   if [[ -z "$query" ]]; then
-    zle -R
     return 0
   fi
 
