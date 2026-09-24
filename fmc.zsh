@@ -31,6 +31,7 @@ FMC_RULES_FILE="${FMC_RULES_FILE:-${_FMC_DIR}/rules.tsv}"
 FMC_BACKEND="${FMC_BACKEND:-local}"
 FMC_SHORTCUT_NAME="${FMC_SHORTCUT_NAME:-ask-cloud-model}"
 FMC_CLOUD_NUM_EXAMPLES="${FMC_CLOUD_NUM_EXAMPLES:-0}"
+FMC_KEYBIND="${FMC_KEYBIND:-^O}"
 
 # source し直したときに例文・ルールを読み込み直す
 unset _fmc_ex_q _fmc_ex_a _fmc_ex_f _fmc_df _fmc_rules
@@ -933,3 +934,73 @@ Command:"
     print -z -- "$cmd"
   fi
 }
+
+# ============================================================================
+# Zsh Line Editor (ZLE) ウィジェット & キーバインド (ポップアップ入力)
+# ============================================================================
+
+_fmc_widget() {
+  emulate -L zsh
+  setopt extended_glob
+
+  autoload -Uz read-from-minibuffer
+
+  local initial_query="$BUFFER"
+  local prompt_str=$'\n\e[1;36m┌── 🤖 fmc (自然言語からコマンド生成) ──────────────────────┐\e[0m\n\e[1;36m│\e[0m 依頼: '
+
+  local REPLY
+  if ! read-from-minibuffer "$prompt_str" "$initial_query"; then
+    zle -M "$(_fmc_c dim)fmc: キャンセルしました$(_fmc_c reset)"
+    return 0
+  fi
+
+  local query="$REPLY"
+  query="${query##[[:space:]]#}"
+  query="${query%%[[:space:]]#}"
+
+  if [[ -z "$query" ]]; then
+    return 0
+  fi
+
+  # 生成中ステータスを表示して即時再描画
+  local backend_msg=""
+  [[ ${FMC_BACKEND:-local} == cloud ]] && backend_msg=" (クラウド)"
+  zle -M "$(_fmc_c dim)🤖 コマンドを生成中${backend_msg}...$(_fmc_c reset)"
+  zle -R
+
+  # fmc -p でコマンドを生成 (stdout: コマンド, stderr: 警告/エラーメッセージ)
+  local err_file=$(mktemp -t fmc_widget_err)
+  local cmd
+  cmd=$(fmc -p "$query" 2>"$err_file")
+  local ret=$?
+  local err_msg=""
+  [[ -f "$err_file" ]] && err_msg=$(<"$err_file")
+  rm -f "$err_file"
+
+  if (( ret == 0 )); then
+    BUFFER="$cmd"
+    CURSOR=${#BUFFER}
+    zle -M "$(_fmc_c green)✅ 生成完了 (Enter で実行、編集も可能)$(_fmc_c reset)"
+  elif (( ret == 2 )); then
+    # 生成成功したが検証の警告あり
+    BUFFER="$cmd"
+    CURSOR=${#BUFFER}
+    err_msg="${err_msg//$'\n'/; }"
+    zle -M "$(_fmc_c yellow)${err_msg}$(_fmc_c reset)"
+  else
+    # 失敗、NOT_A_COMMAND、危険コマンドブロック
+    err_msg="${err_msg//$'\n'/; }"
+    zle -M "$(_fmc_c red)${err_msg:-❌ コマンドの生成に失敗しました}$(_fmc_c reset)"
+  fi
+}
+
+# インタラクティブシェルの場合のみ ZLE ウィジェットとキーバインドを登録
+if [[ -o interactive ]]; then
+  zle -N fmc-widget _fmc_widget
+
+  # 既定のキーバインド (^O: Ctrl+O)
+  # 無効にしたい場合は FMC_KEYBIND="" を設定
+  if [[ -n "$FMC_KEYBIND" ]]; then
+    bindkey "$FMC_KEYBIND" fmc-widget
+  fi
+fi

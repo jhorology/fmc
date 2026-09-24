@@ -36,15 +36,63 @@ fm available
 
 ## インストール
 
+### zsh プラグインマネージャを使う場合
+
+`fmc.plugin.zsh` を提供しているため、各種 zsh プラグインマネージャでそのまま読み込めます。
+
+#### Oh My Zsh
 ```zsh
-git clone <このリポジトリのURL> ~/fmc
-echo 'source ~/fmc/fmc.zsh' >> ~/.zshrc
+git clone https://github.com/jhorology/fmc.git ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/fmc
+```
+`~/.zshrc` の `plugins=(...)` に `fmc` を追加します。
+```zsh
+plugins=(
+  # ...
+  fmc
+)
+```
+
+#### Zinit
+```zsh
+zinit light jhorology/fmc
+```
+
+#### Antidote
+`~/.zsh_plugins.txt` に追記します。
+```zsh
+jhorology/fmc
+```
+
+### 手動でインストールする場合
+
+```zsh
+git clone https://github.com/jhorology/fmc.git ~/fmc
+echo 'source ~/fmc/fmc.plugin.zsh' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-例文バンク (`examples.tsv`) と検証ルール (`rules.tsv`) は `fmc.zsh` と同じディレクトリから読み込むので、3つのファイルは同じ場所に置いてください。
+例文バンク (`examples.tsv`) と検証ルール (`rules.tsv`) はスクリプトと同じディレクトリから自動解決されるため、リポジトリをそのままクローンして読み込むだけで使えます。
 
 ## 使い方
+
+### 1. ショートカットから使う (おすすめ)
+
+プロンプトで **`Ctrl+O`** を押すと、Atuin 風のポップアップ入力が開きます。
+
+```text
+┌── 🤖 fmc (自然言語からコマンド生成) ──────────────────────┐
+│ 依頼: 3日以内に変更された.pyファイルを検索
+```
+
+1. 自然言語で依頼を入力して **Enter** を押します (中断したいときは **Esc** または **Ctrl+C**)。
+2. 生成されたコマンドがプロンプトの入力行に直接展開されます。
+3. 内容を確認・編集し、**Enter** で実行します。
+
+> [!TIP]
+> プロンプトにすでに依頼テキストを入力した状態で `Ctrl+O` を押すと、そのテキストが初期入力として引き継がれます。
+> キーバインドを変更したい場合は、後述の `FMC_KEYBIND` を設定してください。
+
+### 2. コマンドから使う
 
 ```zsh
 fmc "ポート8080を使っているプロセスを殺す"
@@ -70,6 +118,7 @@ fmc "list the 10 largest files in this directory"   # 英語でも可
 
 | 変数 | 既定値 | 説明 |
 |---|---|---|
+| `FMC_KEYBIND` | `^O` | ポップアップ入力を開くショートカットキー (`""` で無効化) |
 | `FMC_HISTORY_FILE` | `~/.fmc_history` | 履歴ファイルのパス |
 | `FMC_MAX_HISTORY` | `100` | 履歴として残す最大行数 |
 | `FMC_MAX_RETRIES` | `3` | 検証で問題が見つかったときの再生成回数 |
