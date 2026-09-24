@@ -32,6 +32,7 @@ FMC_BACKEND="${FMC_BACKEND:-local}"
 FMC_SHORTCUT_NAME="${FMC_SHORTCUT_NAME:-ask-cloud-model}"
 FMC_CLOUD_NUM_EXAMPLES="${FMC_CLOUD_NUM_EXAMPLES:-0}"
 FMC_KEYBIND="${FMC_KEYBIND:-^O}"
+FMC_ICON="${FMC_ICON:-✨}"
 
 # source し直したときに例文・ルールを読み込み直す
 unset _fmc_ex_q _fmc_ex_a _fmc_ex_f _fmc_df _fmc_rules
@@ -778,7 +779,7 @@ EOF
     if [[ $backend == cloud ]]; then
       print -r -- "$(_fmc_c dim)☁️  コマンドを生成中 (クラウド: ${FMC_SHORTCUT_NAME})...$(_fmc_c reset)"
     else
-      print -r -- "$(_fmc_c dim)🤖 コマンドを生成中...$(_fmc_c reset)"
+      print -r -- "$(_fmc_c dim)${FMC_ICON:-✨} コマンドを生成中...$(_fmc_c reset)"
     fi
   fi
 
@@ -998,8 +999,9 @@ _fmc_widget() {
 
   local initial_query="$BUFFER"
   local initial_cursor="$CURSOR"
+  local icon="${FMC_ICON:-✨}"
   # ANSI エスケープを含めないクリーンなプロンプト (文字化け・折り返し崩れ防止)
-  local prompt_str="╭─ 🤖 fmc (自然言語からコマンド生成 / Esc: 取消)"$'\n'"╰─▶ 依頼: "
+  local prompt_str="╭─ ${icon} fmc (自然言語からコマンド生成 / Esc: 取消)"$'\n'"╰─▶ 依頼: "
 
   local REPLY
   if ! _fmc_read_minibuf "$prompt_str" "$initial_query"; then
@@ -1022,7 +1024,7 @@ _fmc_widget() {
   # 生成中ステータスを表示して即時再描画 (zle -M は ANSI エスケープを解釈しないためプレーンテキストで渡す)
   local backend_msg=""
   [[ ${FMC_BACKEND:-local} == cloud ]] && backend_msg=" (クラウド)"
-  zle -M "🤖 コマンドを生成中${backend_msg}..."
+  zle -M "${icon} コマンドを生成中${backend_msg}..."
   zle -R
 
   # fmc -p でコマンドを生成 (stdout: コマンド, stderr: 警告/エラーメッセージ)
