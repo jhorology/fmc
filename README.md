@@ -101,6 +101,26 @@ fmc "list the 10 largest files in this directory"   # 英語でも可
 
 クラウドのモデルは例文を渡すとかえって精度が下がったため、既定では例文を渡しません (`FMC_CLOUD_NUM_EXAMPLES`)。検証・自動修正・再生成・危険コマンドのブロックは、オンデバイスのときと同じようにかかります。
 
+### (コラム) ショートカットの「On-Device」モデルとの違い
+
+ショートカットアプリの「Use Model」アクションには「On-Device」の選択肢もありますが、`fmc` ではオンデバイスの生成にショートカットを使わず、`fm` コマンドを直接呼んでいます。macOS の内部ログ (`log show`) や推論プロセスの解析、実際の生成テストで比較した結果は次のとおりです。
+
+| 項目 | `fm` コマンド (`system`) | ショートカットの「On-Device」 |
+|---|---|---|
+| **ベースモデル** | `com.apple.fm.language.instruct_3b` (3B) | `com.apple.fm.language.instruct_3b` (3B) *(同一)* |
+| **推論エンジン** | `TGOnDeviceInferenceProviderService` (ANE) | `TGOnDeviceInferenceProviderService` (ANE) *(同一)* |
+| **ドラフト / 安全モデル** | `instruct_300m.base` / `safety` | `instruct_300m.base` / `safety` *(同一)* |
+| **適用アダプタ** | `...instruct_3b.fm_api_generic` | `...instruct_3b.shortcuts_ask_afm_action_3b` |
+| **内部 UseCase ID** | `FMFramework.onDevice.Public` | `com.apple.Shortcuts.AskAFMAction3B` |
+| **指示 (instructions)** | `--instructions` で独立して指定可能 | プロンプト内に連結 (ショートカット用ペルソナが注入) |
+| **自己認識の回答** | `...created by Apple.` | `...developed by Apple, built into Shortcuts.` |
+| **指示への応答傾向** | 指示通りコマンドのみを出力しやすい | アシスタントとして聞き返しやすい (単文指示のときなど) |
+| **生成速度 (1回)** | **約 0.3〜0.5 秒** | **約 0.6〜0.9 秒** (CLI・XPC のオーバーヘッドあり) |
+
+- **基盤モデルと知識は同一**: どちらも同一の 3B モデルで動いており、例えば計算問題で全く同じ間違いを出力する (`123 * 45` に対して共に `5545` と誤答) など、内部の重みは共通です。
+- **アダプタとペルソナの差**: ショートカット版はショートカット内の対話型アシスタントとしての振る舞いが組み込まれているため、短い依頼に対して「Please provide more details...」のように聞き返してしまう傾向があります。
+- **結論**: オンデバイスモデルを使う場合は、オーバーヘッドがなく指示を綺麗に分離できる `fm` コマンドの直接呼び出し (`FMC_BACKEND=local`) が最も高速で安定しています。
+
 ## 仕組み
 
 オンデバイスのモデルは小さく、単純に頼むだけでは Linux のコマンドや存在しないフラグを出しがちです。
