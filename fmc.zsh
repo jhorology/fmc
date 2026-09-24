@@ -951,7 +951,7 @@ _fmc_widget() {
 
   local REPLY
   if ! read-from-minibuffer "$prompt_str" "$initial_query"; then
-    zle -M "$(_fmc_c dim)fmc: キャンセルしました$(_fmc_c reset)"
+    zle -M "fmc: キャンセルしました"
     return 0
   fi
 
@@ -963,10 +963,10 @@ _fmc_widget() {
     return 0
   fi
 
-  # 生成中ステータスを表示して即時再描画
+  # 生成中ステータスを表示して即時再描画 (zle -M は ANSI エスケープを解釈しないためプレーンテキストで渡す)
   local backend_msg=""
   [[ ${FMC_BACKEND:-local} == cloud ]] && backend_msg=" (クラウド)"
-  zle -M "$(_fmc_c dim)🤖 コマンドを生成中${backend_msg}...$(_fmc_c reset)"
+  zle -M "🤖 コマンドを生成中${backend_msg}..."
   zle -R
 
   # fmc -p でコマンドを生成 (stdout: コマンド, stderr: 警告/エラーメッセージ)
@@ -978,20 +978,24 @@ _fmc_widget() {
   [[ -f "$err_file" ]] && err_msg=$(<"$err_file")
   rm -f "$err_file"
 
+  # エラーメッセージから ANSI エスケープシーケンスを除去
+  err_msg=${err_msg//$'\033'\\[[0-9;]#[a-zA-Z]/}
+  err_msg="${err_msg##[[:space:]]#}"
+  err_msg="${err_msg%%[[:space:]]#}"
+  err_msg="${err_msg//$'\n'/; }"
+
   if (( ret == 0 )); then
     BUFFER="$cmd"
     CURSOR=${#BUFFER}
-    zle -M "$(_fmc_c green)✅ 生成完了 (Enter で実行、編集も可能)$(_fmc_c reset)"
+    zle -M "✅ 生成完了 (Enter で実行、編集も可能)"
   elif (( ret == 2 )); then
     # 生成成功したが検証の警告あり
     BUFFER="$cmd"
     CURSOR=${#BUFFER}
-    err_msg="${err_msg//$'\n'/; }"
-    zle -M "$(_fmc_c yellow)${err_msg}$(_fmc_c reset)"
+    zle -M "${err_msg:-⚠️  検証で問題が見つかりました}"
   else
     # 失敗、NOT_A_COMMAND、危険コマンドブロック
-    err_msg="${err_msg//$'\n'/; }"
-    zle -M "$(_fmc_c red)${err_msg:-❌ コマンドの生成に失敗しました}$(_fmc_c reset)"
+    zle -M "${err_msg:-❌ コマンドの生成に失敗しました}"
   fi
 }
 
