@@ -65,6 +65,12 @@ ok	list only directories	ls -d */
 ok	メモリ使用量の多いプロセス上位10	ps -Ao pid,%mem,comm -m | head -n 11
 ok	3日前の日付	date -v -3d +%Y-%m-%d
 ok	gitのブランチを更新日時でランキング	git branch --sort=-committerdate
+ok	a.txtの末尾3行	tail -n -3 a.txt
+ok	a.csvの2行目以降	tail -n +2 a.csv
+ok	-vを含む行を検索	grep -e -v a.txt
+ok	-vを含む行を最初の1件だけ	grep -m 1 -e -v a.txt
+negative	a.txtの最後の5行以外	head -n -5 a.txt
+no option -P	fooを行番号付きで検索	grep -n -P foo a.txt
 -mtime -3	3日以内に変更された.pyファイル	find . -type f -name "*.py" -mtime -5
 7 day(s)	1週間前の日付	date -v-5d
 caffeinate	スリープを防止	pmset noidle
@@ -80,12 +86,11 @@ tail	show the 20 most recently modified files	ls -1t | tail -n 20
 EOF
 
 # パーサー: 改行区切りの for / while / if 本体のコマンドを検出できるか
-# (zsh -n は改行を区切りとして認めるが、${(z)} トークン化では改行が消えるため
-#  セミコロン無し do / then の経路を直接検証する)
+# (${(z)} は改行を ';' トークンにする。その前提が崩れていないかを確認する)
 parse_case() {
   (( cases++ ))
   local want=$1
-  local -a cmds=()
+  local -a cmds=() cw_cmds=() cw_flags=()
   _fmc_parse_command "$2"
   for w in "${(@)cw_cmds}"; do cmds+=($w); done
   local c
@@ -98,6 +103,17 @@ parse_case 'mv' $'for f in *.txt\ndo mv -- "$f" "$f.md"\ndone'
 parse_case 'df' $'while true\ndo df -h\nsleep 2\ndone'
 parse_case 'echo' $'if [ -f x.txt ]\nthen echo exists\nfi'
 parse_case 'grep' $'for d in */\ndo grep -rn TODO "$d"\ndone'
+
+# パーサー: 引数の do / then をコマンド位置の制御語とみなさないか
+parse_neg_case() {
+  (( cases++ ))
+  local unwanted=$1
+  local -a cw_cmds=() cw_flags=()
+  _fmc_parse_command "$2"
+  (( ${cw_cmds[(Ie)$unwanted]} )) && ng "パーサー: 引数 $unwanted をコマンドとみなした: $2 => ${cw_cmds[@]}"
+}
+parse_neg_case 'something' 'echo do something'
+parse_neg_case 'file.txt' 'grep -w then file.txt'
 
 # 自動修正
 autofix_case() {

@@ -99,6 +99,10 @@ typeset -gA _FMC_CMD_HINTS=(
   locate       'use "mdfind -name"'
   rename       'use a "for" loop with "mv"'
   mpc          'use "afplay" (play audio files on macOS)'
+  convert      'use "sips" (e.g. "sips -Z 800 in.png --out out.png" to resize, "sips -s format jpeg in.png --out out.jpg" to convert)'
+  magick       'use "sips" (e.g. "sips -Z 800 in.png --out out.png" to resize, "sips -s format jpeg in.png --out out.jpg" to convert)'
+  identify     'use "sips -g pixelWidth -g pixelHeight <file>" (image size) or "mdls <file>" (metadata)'
+  exiftool     'use "mdls <file>" (metadata) or "sips -g all <file>" (image properties)'
 )
 
 # --- 値を1つ取るオプション (値が -3 や +7 のように - で始まってもフラグとみなさない) ---
@@ -107,6 +111,9 @@ typeset -gA _FMC_VALUE_OPTS=(
   date  '-v -f -r'
   cut   '-b -c -f -d'
   sort  '-k -t'
+  head  '-n -c'
+  tail  '-n -c'
+  grep  '-e -f -m -A -B -C'
 )
 
 # --- 危険コマンド (即ブロック) ---
@@ -353,14 +360,10 @@ _fmc_parse_command() {
         if [[ -n $cur ]]; then
           exec_outer=$cur expect=1 cur=""
         fi ;;
-      # do / then は無条件でコマンド位置にする
-      # (for / while / until が expect=0 にするため、セミコロン無しの
-      #  "for f in x do cmd" / "if cond then cmd" でも本体を検出する)
-      (do|then)
-        expect=1; cur="" ;;
       # 制御語・修飾語はコマンド位置 (expect==1) のときだけ次の語をコマンドとみなす
-      # (echo if / echo time のような引数で誤判定しないようにする)
-      (else|elif|if|while|until|time|nohup|noglob|builtin|command|exec)
+      # (echo if / echo do のような引数で誤判定しないようにする。
+      #  ${(z)} は改行を ';' トークンにするので、改行区切りの do / then もここで扱える)
+      (then|do|else|elif|if|while|until|time|nohup|noglob|builtin|command|exec)
         (( expect )) && { expect=1; cur=""; } ;;
       (*)
         if (( expect )); then
