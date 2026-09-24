@@ -939,18 +939,72 @@ Command:"
 # Zsh Line Editor (ZLE) ウィジェット & キーバインド (ポップアップ入力)
 # ============================================================================
 
+# ミニバッファ入力ヘルパー (ESC / Ctrl-C で即時キャンセル、入力バッファの完全復元を保証)
+_fmc_read_minibuf() {
+  emulate -L zsh
+  setopt extended_glob
+
+  local prompt_text="$1"
+  local init_val="$2"
+
+  # ミニバッファ専用キーマップ (初回のみ作成)
+  if ! bindkey -l _fmc_minibuf &>/dev/null; then
+    bindkey -N _fmc_minibuf main
+    # ESC, Ctrl-C, Ctrl-G で即座にキャンセル (send-break)
+    bindkey -M _fmc_minibuf '^[' send-break
+    bindkey -M _fmc_minibuf '\e' send-break
+    bindkey -M _fmc_minibuf '^C' send-break
+    bindkey -M _fmc_minibuf '^G' send-break
+  fi
+
+  local saved_buf="$BUFFER"
+  local saved_cur="$CURSOR"
+  integer stat=1
+
+  local pretext="$PREDISPLAY$LBUFFER$RBUFFER$POSTDISPLAY"$'\n'
+  local +h PREDISPLAY="$pretext$prompt_text"
+  local +h POSTDISPLAY=""
+  local +h LBUFFER="$init_val"
+  local +h RBUFFER=""
+
+  # ESC キーの検出待機時間を短縮 (ESC 単体で即座にキャンセル)
+  local old_keytimeout=$KEYTIMEOUT
+  KEYTIMEOUT=5
+
+  zle split-undo
+  integer changeno=$UNDO_CHANGE_NO
+  integer savelim=$UNDO_LIMIT_NO
+  UNDO_LIMIT_NO=$UNDO_CHANGE_NO
+
+  {
+    zle recursive-edit -K _fmc_minibuf
+    stat=$?
+    (( stat == 0 )) && REPLY="$BUFFER"
+  } always {
+    # どのような理由で終了しても、必ず元の BUFFER と CURSOR を完全復元
+    zle undo $changeno 2>/dev/null || true
+    UNDO_LIMIT_NO=$savelim
+    BUFFER="$saved_buf"
+    CURSOR="$saved_cur"
+    KEYTIMEOUT=$old_keytimeout
+  }
+
+  return $stat
+}
+
 _fmc_widget() {
   emulate -L zsh
   setopt extended_glob
 
-  autoload -Uz read-from-minibuffer
-
   local initial_query="$BUFFER"
+  local initial_cursor="$CURSOR"
   # ANSI エスケープを含めないクリーンなプロンプト (文字化け・折り返し崩れ防止)
   local prompt_str="╭─ 🤖 fmc (自然言語からコマンド生成 / Esc: 取消)"$'\n'"╰─▶ 依頼: "
 
   local REPLY
-  if ! read-from-minibuffer "$prompt_str" "$initial_query"; then
+  if ! _fmc_read_minibuf "$prompt_str" "$initial_query"; then
+    BUFFER="$initial_query"
+    CURSOR="$initial_cursor"
     zle -M "fmc: キャンセルしました"
     return 0
   fi
@@ -960,6 +1014,8 @@ _fmc_widget() {
   query="${query%%[[:space:]]#}"
 
   if [[ -z "$query" ]]; then
+    BUFFER="$initial_query"
+    CURSOR="$initial_cursor"
     return 0
   fi
 
@@ -995,6 +1051,8 @@ _fmc_widget() {
     zle -M "${err_msg:-⚠️  検証で問題が見つかりました}"
   else
     # 失敗、NOT_A_COMMAND、危険コマンドブロック
+    BUFFER="$initial_query"
+    CURSOR="$initial_cursor"
     zle -M "${err_msg:-❌ コマンドの生成に失敗しました}"
   fi
 }
