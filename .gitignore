@@ -43,3 +43,6 @@ flycheck_*.el
 
 # Agent
 .agent-shell/
+
+# Python tests
+__pycache__/

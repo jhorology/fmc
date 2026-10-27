@@ -2,7 +2,8 @@
 
 自然言語で書いた依頼を zsh のコマンドに変換する、Mac 用のシェル関数です。
 変換には Apple Foundation Models の CLI (`fm`) を使い、既定では処理がすべてオンデバイスで完結します。
-設定すれば、ショートカット経由で Apple のクラウドのモデルを使うこともできます (より正確ですが、依頼文がサーバーに送られます)。
+設定すれば、ショートカットまたは `fm-serve` の API 経由で Apple のクラウドモデル
+(PCC) を使うこともできます (依頼文が Apple のサーバーに送られます)。
 
 ```console
 $ fmc "3日以内に変更された.pyファイルを検索"
@@ -18,20 +19,22 @@ $ find . -type f -name "*.py" -mtime -3█    ← プロンプトに入るので
 
 ## 特徴
 
-- **オンデバイス (既定)**: 依頼の内容を外部サービスに送りません。クラウドのモデルを使うのは、`-c` か `FMC_BACKEND=cloud` を指定したときだけです。
+- **オンデバイス (既定)**: `local` / `system` では依頼の内容を外部サービスに送りません。`cloud` や `pcc` を選ぶと Apple のサーバーを利用します。
+- **fm-serve 対応**: HTTP API で `system` / `pcc` を選択でき、PCC は Terminal.app 以外のシェルからも利用できます。
 - **macOS 向け**: BSD 版のコマンド (`sed -i ''`、`date -v-1d`、`stat -f` など) を使うように誘導し、Linux 専用コマンドは検証で弾きます。
 - **生成後の検証と再生成**: 構文、コマンドやフラグの実在、依頼との整合性をチェックし、問題があれば理由を添えて作り直させます。
 - **危険なコマンドの抑止**: `rm -rf ~` のようなコマンドはブロックします。`-y` で即実行する場合も、削除などの操作は実行前に確認します。
 
 ## 必要なもの
 
-- `fm` コマンドが使える macOS (macOS 26 以降、Apple Intelligence が有効)
+- `fm` コマンドが使える macOS (macOS 27 以降、Apple Intelligence が有効)
 - zsh
+- `fm-serve` 経由の場合は起動済みの API サーバーと `curl`・`jq` (クライアント側での `fm` 呼び出しは不要)
 
 `fm` が使えるかは次のコマンドで確認できます。
 
 ```zsh
-fm available
+fm models
 ```
 
 ## インストール
@@ -107,12 +110,130 @@ fmc "list the 10 largest files in this directory"   # 英語でも可
 | `-p`, `--print` | コマンドだけを標準出力に出す (スクリプトやパイプ用)。検証の問題が残った場合は、警告を標準エラーに出して終了コード 2 を返す |
 | `-v`, `--verbose` | 参照した例文、自動修正、検証と再生成の過程を表示する |
 | `-c`, `--cloud` | クラウドのモデル (ショートカット経由) で生成する。後述の設定が必要 |
-| `-l`, `--local` | オンデバイスのモデル (`fm`) で生成する (`FMC_BACKEND=cloud` のときの一時的な切り替え用) |
+| `-l`, `--local` | オンデバイスのモデル (`fm` / `system`) で生成する。他のバックエンドや `pcc` から一時的に戻す場合にも使用可能 |
+| `--backend NAME` | `local` / `cloud` / `fm-serve` を選ぶ (`fm` は `local` の別名) |
+| `-m`, `--model NAME` | `local` / `fm-serve` のモデル (`system` / `pcc`) を選ぶ |
+| `--base-url URL` | API の接続先 (`/v1` まで) を指定する |
 | `-H`, `--history` | 生成履歴を表示する |
 | `--clear-history` | 生成履歴を削除する |
 | `-h`, `--help` | ヘルプを表示する |
 
 ターミナル操作ではない入力 (「こんにちは」など) には、コマンドを生成せずにその旨を表示します。
+
+### fm-serve 経由で利用する
+
+#### PCC の入場券は Terminal.app
+
+macOS 27.2 (26B123) で確認したところ、PCC を利用する `fm` は **Terminal.app から
+直接起動する必要があります**。同じ Mac、同じユーザー、同じ `/usr/bin/fm` でも、
+起動経路が気に入らないと次のありがたい案内で門前払いされます。
+
+```text
+Private Cloud Compute is not available in this context. Please use the Terminal app.
+```
+
+クラウド上の高度な知能を使うために、まずローカルのターミナルアプリを正しく選ぶ。
+未来のコンピューティングにも、純正の玄関から入る礼儀が必要らしいです。
+
+しかも、Terminal.app で起動さえすれば何でもよい、という大らかな話でもありません。
+そこで Python を動かし、その子プロセスとして `fm serve` を起動すると PCC は利用不可。
+LaunchAgent から普通に起動しても同じです。コマンドラインツールなので自由に
+自動化できると思った方には、Apple らしい丁寧なサプライズが用意されています。
+
+一方、**Terminal.app で直接起動した `fm serve` を HTTP 経由で呼ぶと PCC を利用できます**。
+API の呼び出し元まで Terminal.app にする必要はありません。
+玄関で純正チェックを済ませれば、あとは HTTP でどうぞ、という実に味わい深い仕様です。
+以下の2通りで利用できます。
+
+#### 手動: Terminal.app で `fm serve` を起動する
+
+**Terminal.app を開き**、次を実行します。既存の `fm-serve` (既定ポート1976) と
+競合しないよう、この例では1977を使います。
+
+```zsh
+fm models   # pcc に ✓ が付くことを確認
+fm serve --host 127.0.0.1 --port 1977
+```
+
+このウィンドウはサーバー用として開いたままにします。最小化しても PCC の生成が
+成功することを確認済みです。常に眺めて敬意を示す必要まではありません。
+手動起動したサーバーを終了するときは、このウィンドウで Ctrl+C を押します。
+
+**別のシェル**から、利用可否の確認と `fmc` の実行を行います。
+`fmc.zsh` はあらかじめ `source` してください。
+
+```zsh
+# fm serve を直接呼ぶ場合、モデルの状態は .models に入る
+curl -fsS http://127.0.0.1:1977/health \
+  | jq '.models[] | select(.name == "pcc")'
+# available: true を確認
+
+fmc --backend fm-serve --base-url http://127.0.0.1:1977/v1 -m pcc \
+  "今日の日付を表示"
+```
+
+`--backend fm-serve` は Chat Completions API を使う指定なので、ラッパーの
+`fm-serve` プロジェクトを挟まず、Apple の `fm serve` に直接接続する場合にも使えます。
+
+#### 常駐: `fm-serve` の LaunchAgent から Terminal.app に起動を依頼する
+
+`fm-serve` プロジェクトのディレクトリで実行します (`mise`・`uv` が必要です)。
+
+```zsh
+cd /path/to/fm-serve   # fm-serve を配置したディレクトリに置き換える
+mise install
+mise exec -- uv sync
+./service.sh install --terminal
+./service.sh status   # PCC: 有効 を確認
+```
+
+LaunchAgent → AppleScript → Terminal.app → `fm serve` という、コマンド1つを
+常駐させるための優雅な遠回りです。通常の `install` だけでは PCC は有効になりません。
+`--terminal` が純正の玄関へご案内するための大切なオプションです。
+初回に macOS が Terminal.app の制御許可を求めた場合は許可してください。
+
+専用ウィンドウが1つ開き、最小化して利用できます。手で閉じると fm が終了し、
+LaunchAgent の KeepAlive が起動し直すため、ウィンドウも戻ってきます。
+閉じても帰ってくる親切設計なので、終了するときは `./service.sh stop` を使ってください。
+`./service.sh restart` では Terminal 起動の設定を引き継ぎます。
+ログイン後の GUI セッションが必要で、ログアウト中の動作は想定していません。
+
+起動後は任意のシェルから接続します。ラッパー経由では、モデルの状態は
+`/health` の **`.upstream.models`** に入ります。
+
+```zsh
+curl -fsS http://127.0.0.1:1976/health \
+  | jq '.upstream.models[] | select(.name == "pcc")'
+# available: true を確認
+```
+
+`/v1/models` は、利用不可でも律儀に `pcc` を陳列します。
+ショーウィンドウに並んでいることと、買わせてもらえることは別の話です。
+`/health` のモデル別 `available` を見るか、実際に生成して確かめてください。
+サービス全体の `healthy` だけでも PCC の利用可否は判断できません。
+
+```zsh
+fmc --backend fm-serve -m pcc "今日の日付を表示"
+fmc --backend fm-serve -m system -p "カレントディレクトリを表示"
+
+# 常に fm-serve と PCC を使う場合 (~/.zshrc に設定可能)
+export FMC_BACKEND=fm-serve
+export FMC_MODEL=pcc
+fmc "3日以内に変更された.pyファイルを検索"
+
+# 接続先を変更 (/v1 まで指定)
+fmc --base-url http://127.0.0.1:1976/v1 "今日の日付を表示"
+```
+
+`--backend`・`--base-url`・`-m` (`--model`) は環境変数より優先し、
+その呼び出しにだけ適用されます。オプションは依頼文より前に指定してください。
+API エラーや PCC の利用不可は標準エラーに表示し、生成を中止します。
+`fm-serve` のエラー時は別のモデルや `fm` へ自動切り替えしません
+(既存のショートカット経由の `cloud` には従来通りローカルへの切り替えがあります)。
+生成後の検証、再生成、実行前の確認は CLI 経由と共通です。
+PCC では既存のクラウド設定に合わせて例文を既定で省略します
+(`FMC_CLOUD_NUM_EXAMPLES` で変更可能)。`FMC_BACKEND=fm-serve` を設定すると
+`Ctrl+O` ウィジェットでも同じ接続先とモデルを使用します。
 
 ### 環境変数
 
@@ -126,9 +247,12 @@ fmc "list the 10 largest files in this directory"   # 英語でも可
 | `FMC_NUM_EXAMPLES` | `8` | few-shot としてモデルに渡す例文の最大数 |
 | `FMC_EXAMPLES_FILE` | `data/examples.tsv` | 例文バンク |
 | `FMC_RULES_FILE` | `data/rules.tsv` | 意味的な検証ルール |
-| `FMC_BACKEND` | `local` | 生成に使うモデル。`local` (オンデバイス) か `cloud` (ショートカット経由) |
+| `FMC_BACKEND` | `local` | `local` (fm CLI) / `cloud` (ショートカット) / `fm-serve` (HTTP API)。`fm` は `local` の別名 |
+| `FMC_BASE_URL` | `http://127.0.0.1:1976/v1` | API のベース URL (`/v1` まで) |
+| `FMC_MODEL` | `system` | `local` / `fm-serve` のモデル (`system` / `pcc`)。`-l` は `system` に戻す |
+| `FMC_TIMEOUT` | `120` | API 応答の最大待機秒数 (接続タイムアウトは5秒) |
 | `FMC_SHORTCUT_NAME` | `ask-cloud-model` | `cloud` で呼ぶショートカットの名前 |
-| `FMC_CLOUD_NUM_EXAMPLES` | `0` | `cloud` のときに渡す例文の数 |
+| `FMC_CLOUD_NUM_EXAMPLES` | `0` | `cloud` または `fm-serve` / `pcc` のときに渡す例文の数 |
 | `FMC_STATS_FILE` | (なし) | 設定すると、生成回数・残った問題数・使ったモデルを1行ずつ追記する (評価用) |
 
 ### クラウドのモデルを使う
@@ -179,7 +303,7 @@ fmc "list the 10 largest files in this directory"   # 英語でも可
 そこで、モデルの前後に次の処理を挟んでいます。
 
 1. **例文の検索**: 例文バンク `data/examples.tsv` (macOS で動く約140件) から、依頼に近いものを選んでモデルに渡します。日本語はカタカナ語・漢字語の単位、英語は単語単位で比べ、「削除 / 消す / remove」のような言い換えも同じ語として扱います。
-2. **生成**: 短い instructions と選んだ例文を付けて、`fm respond` で1行のコマンドを生成します。クラウドのモデルを使う場合は、instructions と依頼文をショートカットに渡します (例文は既定で渡しません)。
+2. **生成**: 短い instructions と選んだ例文を付けて、`fm respond` で1行のコマンドを生成します。`cloud` ではショートカットへ、`fm-serve` では Chat Completions API の system / user メッセージへ instructions と依頼文を渡します。`cloud` と `fm-serve` / `pcc` では例文を既定で渡しません。
 3. **自動修正**: `find -o` の括弧、`sed -i ''`、`lsof -i :PORT`、`open -a "Google Chrome"` など、定型的な誤りは直接直します。
 4. **検証**:
    - zsh の構文
@@ -200,6 +324,7 @@ man ページから読み取ったフラグ一覧は `~/.cache/fmc/manflags/` �
 
 ```zsh
 zsh tests/check.zsh                                             # 検証・自動修正の回帰テスト (数秒)
+python3 -m unittest discover -s tests -v                         # API・CLI・ショートカットの接続テスト
 FMC_HISTORY_FILE=/dev/null zsh tests/score.zsh fmc.zsh tests/eval.tsv
 FMC_HISTORY_FILE=/dev/null zsh tests/score.zsh fmc.zsh tests/eval2.tsv
 FMC_HISTORY_FILE=/dev/null zsh tests/score.zsh fmc.zsh tests/eval3.tsv
@@ -211,6 +336,10 @@ FMC_HISTORY_FILE=/dev/null zsh tests/score.zsh fmc.zsh tests/eval3.tsv
 - `data/rules.tsv` の正規表現がすべて正しいこと
 - 個別のテストケース (誤りを指摘できるか、正しいものを通すか、危険なコマンドをブロックするか)
 - 例文バンクと評価セットに同じ問題が無いこと
+
+`tests/test_backends.py` は Python 3 の標準ライブラリだけで動き、実モデルを呼ばずに
+API のリクエスト、エラー処理、再生成、モデル選択、危険コマンドの抑止と、
+既存の CLI・ショートカットの動作を確認します。
 
 | 評価セット | 用途 | 現在 |
 |---|---|---|
@@ -245,6 +374,7 @@ FMC_HISTORY_FILE=/dev/null zsh tests/score.zsh fmc.zsh tests/eval3.tsv
 ├── tests/
 │   ├── check.zsh                 # モデルを使わない回帰テスト
 │   ├── score.zsh                 # 採点スクリプト
+│   ├── test_backends.py          # API・CLI・ショートカットの接続テスト
 │   ├── eval.tsv                  # 評価セット (調整用)
 │   ├── eval2.tsv                 # 評価セット (調整用)
 │   └── eval3.tsv                 # 評価セット (確認用・汎化測定)

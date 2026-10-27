@@ -41,6 +41,9 @@ if [[ -z ${FMC_RULES_FILE:-} ]]; then
   fi
 fi
 FMC_BACKEND="${FMC_BACKEND:-local}"
+FMC_BASE_URL="${FMC_BASE_URL:-http://127.0.0.1:1976/v1}"
+FMC_MODEL="${FMC_MODEL:-system}"
+FMC_TIMEOUT="${FMC_TIMEOUT:-120}"
 FMC_SHORTCUT_NAME="${FMC_SHORTCUT_NAME:-ask-cloud-model}"
 FMC_CLOUD_NUM_EXAMPLES="${FMC_CLOUD_NUM_EXAMPLES:-0}"
 FMC_KEYBIND="${FMC_KEYBIND:-^O}"
@@ -687,13 +690,54 @@ _fmc_autofix() {
   print -r -- "$cmd"
 }
 
+# fm-serve の Chat Completions API で生成する (返答は実行しない)
+_fmc_generate_api() {
+  emulate -L zsh
+  local prompt=$1 instructions=$2 sampling=${3:-greedy}
+  local payload response_file http_code raw api_error
+  payload=$(jq -cn --arg model "$FMC_MODEL" --arg instructions "$instructions" \
+    --arg prompt "$prompt" --arg sampling "$sampling" '
+    {model: $model, stream: false, messages: [
+      {role: "system", content: $instructions},
+      {role: "user", content: $prompt}
+    ]} + (if $sampling == "greedy" then {temperature: 0} else {} end)
+  ') || return 1
+  response_file=$(mktemp "${TMPDIR:-/tmp}/fmc-response.XXXXXXXX") || return 1
+  {
+    http_code=$(curl --silent --show-error --connect-timeout 5 --max-time "$FMC_TIMEOUT" \
+      --output "$response_file" --write-out '%{http_code}' \
+      --header 'Content-Type: application/json' --data-binary "$payload" \
+      "${FMC_BASE_URL%/}/chat/completions") || return 1
+    if [[ $http_code != 2[0-9][0-9] ]]; then
+      api_error=$(jq -r '.error.message // .detail // .error // "API request failed" | tostring' \
+        "$response_file" 2>/dev/null) || api_error="Invalid API response"
+      print -r -- "fm-serve HTTP ${http_code}: ${api_error}" >&2
+      return 1
+    fi
+    raw=$(jq -er '
+      if .error then error(.error | tostring)
+      elif (.choices[0].message.refusal // "") != "" then
+        error(.choices[0].message.refusal | tostring)
+      elif .choices[0].finish_reason == "length" then error("Incomplete model response")
+      elif (.choices[0].message.content | type) != "string" then error("Missing response content")
+      elif (.choices[0].message.content | length) == 0 then error("Empty model response")
+      else .choices[0].message.content end
+    ' "$response_file") || return 1
+    print -r -- "$raw"
+  } always {
+    rm -f -- "$response_file"
+  }
+}
+
 # コマンドを1つ生成する
-#   local: fm (オンデバイス) / cloud: ショートカット経由のクラウドモデル
+#   local: fm / cloud: ショートカット / fm-serve: Chat Completions API
 #   cloud のショートカットは入力をそのままモデルに渡すものを想定し、instructions も入力に含める
 _fmc_generate() {
   emulate -L zsh
-  local prompt=$1 instructions=$2 sampling=${3:-greedy} backend=${4:-local} raw
-  if [[ $backend == cloud ]]; then
+  local prompt=$1 instructions=$2 sampling=${3:-greedy} backend=${4:-$FMC_BACKEND} raw
+  if [[ $backend == fm-serve ]]; then
+    raw=$(_fmc_generate_api "$prompt" "$instructions" "$sampling") || return 1
+  elif [[ $backend == cloud ]]; then
     # 失敗理由 (利用上限など) は標準エラーに出す
     local errf=$(mktemp -t fmc) rc=0
     raw=$(print -r -- "${instructions}"$'\n\n'"${prompt}" |
@@ -705,7 +749,7 @@ _fmc_generate() {
   else
     local -a opts=(--no-stream)
     [[ $sampling == greedy ]] && opts+=(--greedy)
-    raw=$(fm respond $opts --instructions "$instructions" "$prompt") || return 1
+    raw=$(fm respond $opts --model "$FMC_MODEL" --instructions "$instructions" "$prompt") || return 1
   fi
   _fmc_sanitize "$raw"
 }
@@ -716,6 +760,7 @@ fmc() {
   setopt extended_glob
 
   local auto_exec=false print_only=false verbose=false backend=$FMC_BACKEND
+  local FMC_BASE_URL=$FMC_BASE_URL FMC_MODEL=$FMC_MODEL
   while (( $# )); do
     case "$1" in
       --history|-H)
@@ -738,6 +783,7 @@ fmc - Foundation Model Command translator
   fmc -v "説明"                      参照した例文と検証の過程を表示
   fmc -c "説明"                      クラウドのモデル (ショートカット経由) で生成
   fmc -l "説明"                      オンデバイスのモデル (fm) で生成
+  fmc --backend fm-serve -m pcc "説明"  fm-serve 経由で PCC を利用
   fmc --history                      生成履歴を表示
   fmc --clear-history                履歴を削除
   fmc --help                         このヘルプを表示
@@ -749,10 +795,18 @@ fmc - Foundation Model Command translator
   FMC_NUM_EXAMPLES    few-shot に使う例文の数 (デフォルト: 8)
   FMC_EXAMPLES_FILE   例文バンク (デフォルト: data/examples.tsv)
   FMC_RULES_FILE      意味的な検証ルール (デフォルト: data/rules.tsv)
-  FMC_BACKEND         生成に使うモデル: local (fm、既定) / cloud (ショートカット経由)
+  FMC_BACKEND         local (fm、既定) / cloud (ショートカット) / fm-serve (HTTP API)
+  FMC_BASE_URL        API URL (既定: http://127.0.0.1:1976/v1)
+  FMC_MODEL           local / fm-serve のモデル: system (既定) / pcc
+  FMC_TIMEOUT         API 応答の最大待機秒数 (既定: 120)
   FMC_SHORTCUT_NAME   cloud で呼ぶショートカット名 (デフォルト: ask-cloud-model)
-  FMC_CLOUD_NUM_EXAMPLES  cloud で渡す例文の数 (デフォルト: 0)
+  FMC_CLOUD_NUM_EXAMPLES  cloud / fm-serve の pcc に渡す例文の数 (デフォルト: 0)
   FMC_STATS_FILE      設定すると、生成回数・残った問題数・使ったモデルを1行ずつ追記する (評価用)
+
+接続オプション (環境変数より優先):
+  --backend NAME      local / cloud / fm-serve (fm は local の別名)
+  --base-url URL      API の接続先 (/v1 まで)
+  -m, --model NAME    local / fm-serve で利用するモデル
 
 例:
   fmc "ポート3000のプロセスを殺す"
@@ -765,7 +819,19 @@ EOF
       -p|--print)   print_only=true; shift ;;
       -v|--verbose) verbose=true; shift ;;
       -c|--cloud)   backend=cloud; shift ;;
-      -l|--local)   backend=local; shift ;;
+      -l|--local)   backend=local; FMC_MODEL=system; shift ;;
+      --backend|--base-url|--model|-m)
+        if (( $# < 2 )) || [[ -z $2 || $2 == -* ]]; then
+          print -r -- "❌ $1 に値を指定してください" >&2
+          return 1
+        fi
+        case $1 in
+          --backend) backend=$2 ;;
+          --base-url) FMC_BASE_URL=$2 ;;
+          --model|-m) FMC_MODEL=$2 ;;
+        esac
+        shift 2
+        ;;
       --) shift; break ;;
       *) break ;;
     esac
@@ -785,22 +851,39 @@ EOF
   local query="$*"
 
   # --- 生成に使うコマンドの存在チェック ---
-  if [[ $backend != (local|cloud) ]]; then
-    print -r -- "$(_fmc_c red)❌ FMC_BACKEND は local か cloud を指定してください: ${backend}$(_fmc_c reset)" >&2
+  [[ $backend == fm ]] && backend=local
+  if [[ $backend != (local|cloud|fm-serve) ]]; then
+    print -r -- "$(_fmc_c red)❌ FMC_BACKEND は local / cloud / fm-serve を指定してください: ${backend}$(_fmc_c reset)" >&2
     return 1
   fi
   if [[ $backend == cloud ]] && ! command -v shortcuts &>/dev/null; then
     print -r -- "$(_fmc_c yellow)⚠️  'shortcuts' コマンドが無いため、オンデバイスのモデルを使います$(_fmc_c reset)" >&2
-    backend=local
+    backend=local FMC_MODEL=system
   fi
   if [[ $backend == local ]] && ! command -v fm &>/dev/null; then
-    print -r -- "$(_fmc_c red)❌ 'fm' コマンドが見つかりません。macOS 26 以降が必要です。$(_fmc_c reset)" >&2
+    print -r -- "$(_fmc_c red)❌ 'fm' コマンドが見つかりません。macOS 27 以降が必要です。$(_fmc_c reset)" >&2
     return 1
+  fi
+
+  if [[ $backend == fm-serve ]]; then
+    if [[ $FMC_BASE_URL != http://* && $FMC_BASE_URL != https://* ]]; then
+      print -r -- "❌ FMC_BASE_URL は http(s):// で始まる URL を指定してください" >&2
+      return 1
+    fi
+    local dependency
+    for dependency in curl jq; do
+      if ! command -v "$dependency" &>/dev/null; then
+        print -r -- "❌ '$dependency' コマンドが見つかりません (backend: fm-serve)" >&2
+        return 1
+      fi
+    done
   fi
 
   if ! $print_only; then
     if [[ $backend == cloud ]]; then
       print -r -- "$(_fmc_c dim)☁️  コマンドを生成中 (クラウド: ${FMC_SHORTCUT_NAME})...$(_fmc_c reset)"
+    elif [[ $backend == fm-serve ]]; then
+      print -r -- "$(_fmc_c dim)${FMC_ICON:-✨} コマンドを生成中 (fm-serve: ${FMC_MODEL})...$(_fmc_c reset)"
     else
       print -r -- "$(_fmc_c dim)${FMC_ICON:-✨} コマンドを生成中...$(_fmc_c reset)"
     fi
@@ -819,7 +902,7 @@ EOF
     [[ -n $REPLY ]] && cloud_instructions+=$'\n\nExamples:\n\n'"${REPLY}"
   fi
   local instructions=$local_instructions
-  if [[ $backend == cloud ]]; then
+  if [[ $backend == cloud || ( $backend == fm-serve && $FMC_MODEL == pcc ) ]]; then
     instructions=$cloud_instructions
     (( FMC_CLOUD_NUM_EXAMPLES > 0 )) && examples=$REPLY || examples=""
   fi
@@ -840,7 +923,7 @@ Command:"
     # クラウドは回数制限やネットワークで失敗しうるので、オンデバイスに切り替えて続ける
     if (( ! gen_ok )) && [[ $backend == cloud ]] && command -v fm &>/dev/null; then
       print -r -- "$(_fmc_c yellow)⚠️  クラウドでの生成に失敗したため、オンデバイスのモデルに切り替えます$(_fmc_c reset)" >&2
-      backend=local instructions=$local_instructions
+      backend=local FMC_MODEL=system instructions=$local_instructions
       cmd=$(_fmc_generate "$prompt" "$instructions" $sampling $backend) && gen_ok=1
     fi
     if (( ! gen_ok )); then
@@ -1061,6 +1144,7 @@ _fmc_widget() {
     # 生成中ステータスを表示して即時再描画 (zle -M は ANSI エスケープを解釈しないためプレーンテキストで渡す)
     local backend_msg=""
     [[ ${FMC_BACKEND:-local} == cloud ]] && backend_msg=" (クラウド)"
+    [[ ${FMC_BACKEND:-local} == fm-serve ]] && backend_msg=" (fm-serve: ${FMC_MODEL:-system})"
     zle -M "${icon} コマンドを生成中${backend_msg}..."
     zle -R
 
