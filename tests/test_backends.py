@@ -106,6 +106,28 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(len(self.requests), 2)
         self.assertIn("Examples:", self.requests[0][1]["messages"][0]["content"])
         self.assertNotIn("Examples:", self.requests[1][1]["messages"][0]["content"])
+        cloud_instructions = self.requests[1][1]["messages"][0]["content"]
+        self.assertIn("date -v for requested relative dates", cloud_instructions)
+        self.assertIn("Zsh arrays start at index 1", cloud_instructions)
+        self.assertNotIn("Zsh arrays start at index 1", self.requests[0][1]["messages"][0]["content"])
+
+    def test_pcc_retries_gnu_option_after_other_flags(self):
+        self.respond("date -u -d yesterday +%Y-%m-%d")
+        self.respond("date -u -v-1d +%Y-%m-%d")
+        result = self.run_zsh('fmc -p "昨日の日付"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "date -u -v-1d +%Y-%m-%d\n")
+        self.assertEqual(len(self.requests), 2)
+        self.assertIn("BSD date uses -v", self.requests[1][1]["messages"][1]["content"])
+
+    def test_pcc_retries_bash_read(self):
+        self.respond("read -p 'Input: ' reply")
+        self.respond('read "reply?Input: "')
+        result = self.run_zsh('fmc -p "入力を読み込む"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'read "reply?Input: "\n')
+        self.assertEqual(len(self.requests), 2)
+        self.assertIn("zsh read -p reads from a coprocess", self.requests[1][1]["messages"][1]["content"])
 
     def test_validation_feedback_reaches_api(self):
         self.respond("fmc_nonexistent_command")
@@ -141,6 +163,16 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "pwd\n")
         self.assertIn("--no-stream\n--greedy\n--model\npcc\n", Path(self.env["FMC_TEST_ARGS"]).read_text())
+        self.assertEqual(self.requests, [])
+
+    def test_direct_pcc_also_receives_platform_instructions(self):
+        self.env["FMC_BACKEND"] = "local"
+        self.env["FMC_TEST_ARGS"] = str(Path(self.temp.name) / "cli-args")
+        result = self.run_zsh('fm() { print -rl -- "$@" > "$FMC_TEST_ARGS"; print pwd; }; fmc -p "カレントディレクトリを表示"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = Path(self.env["FMC_TEST_ARGS"]).read_text()
+        self.assertIn("Zsh arrays start at index 1", args)
+        self.assertNotIn("Examples:", args)
         self.assertEqual(self.requests, [])
 
     def test_print_mode_does_not_execute_api_command(self):
@@ -184,6 +216,7 @@ class BackendTests(unittest.TestCase):
         prompt = Path(self.env["FMC_TEST_PROMPT"]).read_text()
         self.assertIn("Request: カレントディレクトリを表示", prompt)
         self.assertNotIn("Examples:", prompt)
+        self.assertIn("Zsh arrays start at index 1", prompt)
         self.assertEqual(self.requests, [])
 
     def test_shortcut_failure_still_falls_back_to_on_device(self):

@@ -69,6 +69,12 @@ typeset -g _FMC_INSTRUCTIONS='You are a macOS zsh expert. Convert the request in
 Answer with the command only. Follow the style of the examples. Operate on the current directory unless another place is named.
 If the request is not a terminal task, answer NOT_A_COMMAND.'
 
+# 例文を省く PCC にも、BSD / zsh の具体的な制約は必ず渡す。
+typeset -g _FMC_CLOUD_INSTRUCTIONS='Use the simplest command for the request, with built-in macOS BSD tools and default interactive zsh. Do not assume GNU tools or extra packages unless explicitly requested.
+BSD options: date -v for requested relative dates (not -d); use plain date for today. Use stat -f (not -c), du -d (not --max-depth), sed -i with an empty quoted suffix, grep -E (not -P), and ps with BSD options (not --sort). BSD head has no negative counts. For find use -mtime/-mmin for age and -size for size; -printf is unavailable. Use stat -f only when metadata formatting is needed.
+Quote variable expansions and find patterns. For shell glob loops allow no matches with (N); never add (N) inside a quoted find pattern. Zsh arrays start at index 1; unquoted scalars do not split into words. Use read -A for arrays, not read -a, mapfile, or readarray; for prompts use read "name?Prompt: ", not bash read -p. Avoid assigning status, pipestatus, path, commands, or UID.
+Keep loops and conditionals on one complete line with semicolons. Do not wrap the answer in bash -c or zsh -c.'
+
 # --- Linux専用コマンドなどに対する代替ヒント ---
 typeset -gA _FMC_CMD_HINTS=(
   ip           'use "ipconfig getifaddr en0" (local IP) or "ifconfig"'
@@ -106,6 +112,8 @@ typeset -gA _FMC_CMD_HINTS=(
   magick       'use "sips" (e.g. "sips -Z 800 in.png --out out.png" to resize, "sips -s format jpeg in.png --out out.jpg" to convert)'
   identify     'use "sips -g pixelWidth -g pixelHeight <file>" (image size) or "mdls <file>" (metadata)'
   exiftool     'use "mdls <file>" (metadata) or "sips -g all <file>" (image properties)'
+  mapfile      'use a while IFS= read -r loop to collect lines in a zsh array'
+  readarray    'use a while IFS= read -r loop to collect lines in a zsh array'
 )
 
 # --- 値を1つ取るオプション (値が -3 や +7 のように - で始まってもフラグとみなさない) ---
@@ -463,6 +471,44 @@ _fmc_validate() {
   local -a cw_cmds cw_flags
   _fmc_parse_command "$cmd"
 
+  # man が無い環境でも既知の GNU 専用オプションを検出する。
+  # トークン化したフラグを使い、引用された説明文や検索パターンを誤検知しない。
+  local -A bsd_option_hints=(
+    'date -d' 'BSD date uses -v (e.g. date -v-1d), not -d'
+    'date --date' 'BSD date uses -v (e.g. date -v-1d), not --date'
+    'stat -c' 'BSD stat uses -f (e.g. stat -f %z file), not -c'
+    'stat --format' 'BSD stat uses -f, not --format'
+    'find -printf' 'BSD find has no -printf; use -exec stat -f or ls -l'
+    'find -fprintf' 'BSD find has no -fprintf; use -exec stat -f with redirection'
+    'du --max-depth' 'BSD du uses -d N, not --max-depth'
+    'ps --sort' 'BSD ps has no --sort; use ps -Ao pid,%cpu,comm -r (CPU) or -m (memory)'
+    'grep --perl-regexp' 'BSD grep has no --perl-regexp; use grep -E'
+  )
+  local option_entry option_cmd option_flag option_key option_path
+  for option_entry in $cw_flags; do
+    option_cmd=${option_entry%% *} option_flag=${option_entry#* }
+    option_key="${option_cmd:t} $option_flag"
+    option_path=${commands[$option_cmd]:-$option_cmd}
+    if [[ $option_path == (/bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*) && -n ${bsd_option_hints[$option_key]} ]]; then
+      print -r -- "$bsd_option_hints[$option_key]"
+    fi
+    if [[ $option_cmd == read && $option_flag == -[A-Za-z]#a[A-Za-z]# ]]; then
+      print -r -- 'zsh read uses -A for arrays, not bash read -a'
+    elif [[ $option_cmd == read && $option_flag == -[A-Za-z]#p[A-Za-z]# ]]; then
+      # zsh の -p 自体は coprocess 用として有効。プロンプト文字列を渡す誤りだけを指摘。
+      local -a read_tokens=(${(z)cmd})
+      local -i read_i
+      local read_arg
+      for (( read_i = 1; read_i < $#read_tokens; read_i++ )); do
+        [[ $read_tokens[read_i] == $option_flag ]] || continue
+        read_arg=${(Q)read_tokens[read_i+1]}
+        [[ $read_arg == (\$*|[A-Za-z_][A-Za-z0-9_]#|-*) ]] && continue
+        print -r -- 'zsh read -p reads from a coprocess; for a prompt use read "name?Prompt: "'
+        break
+      done
+    fi
+  done
+
   # コマンドの存在チェック
   local -A reported
   for w in $cw_cmds; do
@@ -487,7 +533,7 @@ _fmc_validate() {
     c=${entry%% *} flag=${entry#* }
     [[ -n ${flag_reported[$entry]} ]] && continue
     flag_reported[$entry]=1
-    [[ $c == (git|docker|brew|npm|npx|pip|pip3|python|python3|ruby|perl|swift|xcrun|go|cargo|kubectl|java|node|make|gcc|clang|defaults|security|tmutil|diskutil|hdiutil|launchctl|log|zsh|bash|sh) ]] && continue
+    [[ $c == (read|git|docker|brew|npm|npx|pip|pip3|python|python3|ruby|perl|swift|xcrun|go|cargo|kubectl|java|node|make|gcc|clang|defaults|security|tmutil|diskutil|hdiutil|launchctl|log|zsh|bash|sh) ]] && continue
     cpath=${commands[$c]}
     [[ $cpath == (/bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*) ]] || continue
     _fmc_man_flags $c
@@ -895,6 +941,7 @@ EOF
   _fmc_select_examples "$query"
   local examples=$REPLY match_score=${reply[1]}
   local local_instructions=$_FMC_INSTRUCTIONS cloud_instructions=$_FMC_INSTRUCTIONS
+  cloud_instructions+=$'\n\n'"$_FMC_CLOUD_INSTRUCTIONS"
   [[ -n $examples ]] && local_instructions+=$'\n\nExamples:\n\n'"${examples}"
   # クラウドのモデルは例文に引きずられて精度が下がるので、既定では例文を渡さない
   if (( FMC_CLOUD_NUM_EXAMPLES > 0 )); then
@@ -902,7 +949,7 @@ EOF
     [[ -n $REPLY ]] && cloud_instructions+=$'\n\nExamples:\n\n'"${REPLY}"
   fi
   local instructions=$local_instructions
-  if [[ $backend == cloud || ( $backend == fm-serve && $FMC_MODEL == pcc ) ]]; then
+  if [[ $backend == cloud || $FMC_MODEL == pcc ]]; then
     instructions=$cloud_instructions
     (( FMC_CLOUD_NUM_EXAMPLES > 0 )) && examples=$REPLY || examples=""
   fi

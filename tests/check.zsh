@@ -69,6 +69,16 @@ ok	a.txtの末尾3行	tail -n -3 a.txt
 ok	a.csvの2行目以降	tail -n +2 a.csv
 ok	-vを含む行を検索	grep -e -v a.txt
 ok	-vを含む行を最初の1件だけ	grep -m 1 -e -v a.txt
+ok	文字列を表示	printf '%s\n' 'date -d yesterday; read -p prompt'
+ok	配列を読み込む	read -rA items
+ok	入力を読み込む	read 'reply?Input: '
+ok	coprocessから読み込む	read -p reply
+uses -v	昨日の日付	date -u -d yesterday
+uses -f	ファイルサイズ	/usr/bin/stat -c %s a.txt
+no -fprintf	ファイルを一覧	find . -type f -fprintf output.txt '%p\n'
+uses -d N	フォルダの容量	du -h --max-depth=2 .
+zsh read	配列を読み込む	read -ra items
+zsh read	入力を読み込む	read -p 'Input: ' reply
 negative	a.txtの最後の5行以外	head -n -5 a.txt
 no option -P	fooを行番号付きで検索	grep -n -P foo a.txt
 -mtime -3	3日以内に変更された.pyファイル	find . -type f -name "*.py" -mtime -5
